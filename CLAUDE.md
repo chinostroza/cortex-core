@@ -51,6 +51,9 @@ mix coveralls.html
 
 # Run tests in watch mode (requires installing mix_test_watch)
 mix test.watch
+
+# Run tests with verbose output
+mix test --trace
 ```
 
 ### Publishing
@@ -103,6 +106,8 @@ The library is configured via environment variables:
 3. **Error Handling**: The library uses tagged tuples (`{:ok, result}` / `{:error, reason}`) - maintain this pattern
 4. **API Compatibility**: Maintain compatibility with the public API in `CortexCore` module
 5. **Health Monitoring**: Provider health is tracked automatically - ensure new adapters properly report success/failure
+6. **Configuration**: Provider configuration is handled via environment variables in JSON format (see `CORTEX_PROVIDERS`)
+7. **Dependencies**: Uses `req` for HTTP, `finch` for connection pooling, and `jason` for JSON parsing
 
 ## Common Development Tasks
 

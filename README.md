@@ -11,8 +11,9 @@ A powerful multi-provider AI gateway library for Elixir. Build cost-effective AI
 
 - 🌐 **Multi-Provider Support**: OpenAI, Anthropic, Google Gemini, Groq, Cohere, xAI, and Ollama (local)
 - 🔄 **Intelligent Failover**: Automatic fallback to next available provider
-- 🔑 **API Key Rotation**: Built-in strategies (round-robin, least-used, random)  
+- 🔑 **API Key Rotation**: Built-in strategies (round-robin, least-used, random)
 - 🌊 **Streaming Support**: SSE and JSON streaming for real-time responses
+- 🧠 **Embeddings Support**: Text embeddings for RAG and semantic search (OpenAI models)
 - 🏥 **Health Monitoring**: Automatic health checks and provider availability tracking
 - 📊 **Priority-based Selection**: Configure provider priorities for cost optimization
 - 🛡️ **Rate Limit Handling**: Automatic detection and key rotation on rate limits
@@ -73,6 +74,11 @@ export GROQ_MODEL=llama3-8b-8192
 export OLLAMA_BASE_URL=http://localhost:11434
 export OLLAMA_MODEL=llama2
 
+# Embeddings (OpenAI)
+export OPENAI_EMBEDDINGS_API_KEYS=sk-embed-key1,sk-embed-key2
+export OPENAI_EMBEDDINGS_DEFAULT_MODEL=text-embedding-3-small
+export OPENAI_EMBEDDINGS_TIMEOUT=30000
+
 # Pool Configuration
 export WORKER_POOL_STRATEGY=local_first  # or: round_robin, least_used, random
 export HEALTH_CHECK_INTERVAL=30          # seconds (0 to disable)
@@ -107,6 +113,50 @@ CortexCore.add_worker("openai-europe",
   model: "gpt-3.5-turbo"
 )
 ```
+
+### Embeddings for RAG and Semantic Search
+
+```elixir
+# Single text embedding
+{:ok, vector} = CortexCore.embed("Paris is the capital of France")
+# => {:ok, [0.023, -0.891, ..., 0.445]}  # 1536 floats
+
+# Batch embedding (up to 2048 texts)
+{:ok, vectors} = CortexCore.embed([
+  "First document",
+  "Second document",
+  "Third document"
+])
+# => {:ok, [[0.01, ...], [0.02, ...], [0.03, ...]]}
+
+# Use different models
+{:ok, vector} = CortexCore.embed("Hello world",
+  model: "text-embedding-3-large"  # 3072 dimensions
+)
+
+# Full API access with metadata
+{:ok, result} = CortexCore.call(:embeddings, %{
+  input: "Semantic search query"
+})
+# => %{
+#   embedding: [0.023, ...],
+#   model: "text-embedding-3-small",
+#   dimensions: 1536,
+#   usage: %{prompt_tokens: 3, total_tokens: 3},
+#   cost_usd: 0.00000006
+# }
+```
+
+**Supported Models:**
+- `text-embedding-3-small` - 1536 dims, $0.020 per 1M tokens (default)
+- `text-embedding-3-large` - 3072 dims, $0.130 per 1M tokens
+- `text-embedding-ada-002` - 1536 dims, $0.100 per 1M tokens (legacy)
+
+**Use Cases:**
+- RAG (Retrieval-Augmented Generation) pipelines
+- Semantic search over documents
+- Clustering similar content
+- Recommendation systems
 
 ## Provider Priorities
 
