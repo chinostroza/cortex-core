@@ -524,14 +524,14 @@ defmodule CortexCore.Workers.Pool do
         apply(state.registry, :list_all, [])
       end
 
-    # Filtrar por provider y disponibilidad
+    # Filtrar por provider y disponibilidad (incluye :unknown cuando health checks están deshabilitados)
     all_workers
     |> Enum.filter(fn worker ->
       worker_name = worker.name
       health = Map.get(state.health_status, worker_name, :unknown)
 
-      # Verificar que esté disponible y coincida con el provider
-      health == :available and String.contains?(worker_name, provider)
+      health not in [:unavailable, :quota_exceeded, :rate_limited] and
+        String.contains?(worker_name, provider)
     end)
   end
 
