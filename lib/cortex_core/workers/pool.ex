@@ -1,0 +1,717 @@
+defmodule CortexCore.Workers.Pool do
+  @moduledoc """
+  Pool de workers que gestiona la selección y distribución de trabajo.
+
+  Responsabilidades:
+  - Seleccionar el mejor worker disponible según la estrategia
+  - Ejecutar health checks periódicos
+  - Manejar failover cuando un worker falla
+  - Implementar diferentes estrategias de routing
+  """
+
+  use GenServer
+  require Logger
+
+  # 30 segundos
+  @health_check_interval 30_000
+
+  defstruct [
+    :registry,
+    :strategy,
+    :health_status,
+    :check_interval,
+    :round_robin_index
+  ]
+
+  # Client API
+
+  def start_link(opts \\ []) do
+    name = Keyword.get(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, opts, name: name)
+  end
+
+  @doc """
+  Obtiene un stream de completion del mejor worker disponible.
+  Si el primer worker falla, intenta con el siguiente.
+  """
+  def stream_completion(pool \\ __MODULE__, messages, opts \\ []) do
+    GenServer.call(pool, {:stream_completion, messages, opts}, 30_000)
+  end
+
+  @doc """
+  Ejecuta una operación genérica en el mejor worker disponible del tipo especificado.
+
+  ## Parameters
+    - pool: El pool a usar (default: __MODULE__)
+    - service_type: Tipo de servicio (:llm, :search, :audio, :vision, :http)
+    - params: Mapa con parámetros específicos del servicio
+    - opts: Opciones adicionales (timeout, etc.)
+
+  ## Examples
+      Pool.call(:search, %{query: "Elixir benefits", max_results: 5}, [])
+      Pool.call(:audio, %{text: "Hello", voice: "adam"}, [])
+  """
+  def call(pool \\ __MODULE__, service_type, params, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 30_000)
+    GenServer.call(pool, {:call, service_type, params, opts}, timeout)
+  end
+
+  @doc """
+  Obtiene el estado de salud de todos los workers.
+  """
+  def health_status(pool \\ __MODULE__) do
+    GenServer.call(pool, :health_status)
+  end
+
+  @doc """
+  Fuerza un health check inmediato de todos los workers.
+  """
+  def check_health(pool \\ __MODULE__) do
+    GenServer.cast(pool, :check_health)
+  end
+
+  # Server Callbacks
+
+  @impl true
+  def init(opts) do
+    registry = Keyword.get(opts, :registry, CortexCore.Workers.Registry)
+    strategy = Keyword.get(opts, :strategy, :local_first)
+    check_interval = Keyword.get(opts, :check_interval, @health_check_interval)
+
+    state = %__MODULE__{
+      registry: registry,
+      strategy: strategy,
+      health_status: %{},
+      check_interval: check_interval,
+      round_robin_index: 0
+    }
+
+    # Workers are configured externally via config/runtime.exs
+    # No need to auto-configure from environment variables
+
+    # Solo programar health checks si están habilitados
+    # Primer check después de 10 segundos para dar tiempo a registrar workers
+    if check_interval != :disabled do
+      Process.send_after(self(), :periodic_health_check, 10_000)
+    end
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:stream_completion, messages, opts}, _from, state) do
+    case select_and_execute(state, messages, opts) do
+      {:ok, stream, new_state} ->
+        {:reply, {:ok, stream}, new_state}
+
+      {:ok, stream} ->
+        {:reply, {:ok, stream}, state}
+
+      {:error, :no_workers_available} = error ->
+        Logger.error("No hay workers disponibles")
+        {:reply, error, state}
+
+      {:error, reason} = error ->
+        Logger.error("Error al procesar completion: #{inspect(reason)}")
+        {:reply, error, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:call, service_type, params, opts}, _from, state) do
+    case select_and_execute_service(state, service_type, params, opts) do
+      {:ok, result, new_state} ->
+        {:reply, {:ok, result}, new_state}
+
+      {:ok, result} ->
+        {:reply, {:ok, result}, state}
+
+      {:error, :no_workers_available} = error ->
+        Logger.error("No hay workers disponibles para service_type: #{service_type}")
+        {:reply, error, state}
+
+      {:error, reason} = error ->
+        Logger.error("Error al procesar llamada #{service_type}: #{inspect(reason)}")
+        {:reply, error, state}
+    end
+  end
+
+  @impl true
+  def handle_call(:health_status, _from, state) do
+    {:reply, state.health_status, state}
+  end
+
+  @impl true
+  def handle_cast(:check_health, state) do
+    new_health_status = perform_health_checks(state)
+    {:noreply, %{state | health_status: new_health_status}}
+  end
+
+  @impl true
+  def handle_info(:configure_initial_workers, state) do
+    # Configurar workers de forma asíncrona
+    Task.start(fn ->
+      CortexCore.Workers.Supervisor.configure_initial_workers(state.registry)
+    end)
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({ref, {:chunk, _chunk}}, state) when is_reference(ref) do
+    # Ignorar mensajes de chunks de streaming (son manejados por el proceso que hizo el call)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({ref, :done}, state) when is_reference(ref) do
+    # Ignorar mensajes de streams completados
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(:periodic_health_check, state) do
+    new_health_status = perform_health_checks(state)
+
+    # Programar el siguiente check solo si no están deshabilitados
+    if state.check_interval != :disabled do
+      Process.send_after(self(), :periodic_health_check, state.check_interval)
+    end
+
+    {:noreply, %{state | health_status: new_health_status}}
+  end
+
+  # Private Functions
+
+  defp select_and_execute_service(state, service_type, params, opts) do
+    # Verificar si se especificó un provider específico
+    case Keyword.get(opts, :provider) do
+      nil ->
+        # Obtener workers del tipo de servicio especificado
+        workers = get_workers_by_service_type(state, service_type)
+
+        if Enum.empty?(workers) do
+          {:error, :no_workers_available}
+        else
+          # Aplicar estrategia de selección
+          case state.strategy do
+            :round_robin ->
+              case execute_service_with_workers(workers, params, opts) do
+                {:ok, result} ->
+                  new_state = %{state | round_robin_index: state.round_robin_index + 1}
+                  {:ok, result, new_state}
+
+                error ->
+                  error
+              end
+
+            _ ->
+              ordered = apply_strategy(workers, state.strategy)
+              execute_service_with_workers(ordered, params, opts)
+          end
+        end
+
+      provider_name ->
+        # Usar provider específico
+        case CortexCore.Workers.Registry.get(state.registry, provider_name) do
+          {:ok, worker} ->
+            worker_service_type = worker.__struct__.service_type()
+            if worker_service_type == service_type do
+              execute_service_with_workers([worker], params, opts)
+            else
+              {:error, {:wrong_service_type, "Worker #{provider_name} is #{worker_service_type}, not #{service_type}"}}
+            end
+
+          {:error, :not_found} ->
+            {:error, {:provider_not_found, provider_name}}
+        end
+    end
+  end
+
+  defp select_and_execute(state, messages, opts) do
+    # Verificar si se especificó un provider
+    case Keyword.get(opts, :provider) do
+      nil ->
+        # Usar estrategia normal de selección
+        case state.strategy do
+          :round_robin ->
+            # Solo workers LLM para chat completion
+            workers = get_available_workers(state, :llm)
+
+            case execute_with_workers(workers, messages, opts) do
+              {:ok, stream} ->
+                # Incrementar el índice para la siguiente llamada
+                new_state = %{state | round_robin_index: state.round_robin_index + 1}
+                {:ok, stream, new_state}
+
+              error ->
+                error
+            end
+
+          _ ->
+            # Solo workers LLM para chat completion
+            workers = get_available_workers(state, :llm)
+            execute_with_workers(workers, messages, opts)
+        end
+
+      provider ->
+        # Usar worker específico
+        workers = get_workers_by_provider(state, provider)
+        execute_with_workers(workers, messages, opts)
+    end
+  end
+
+  defp execute_with_workers([], _messages, _opts) do
+    {:error, :no_workers_available}
+  end
+
+  defp execute_with_workers(workers, messages, opts) do
+    # Intentar con cada worker hasta que uno funcione
+    execute_with_failover(workers, messages, opts)
+  end
+
+  defp get_available_workers(state, service_type) do
+    all_workers =
+      if is_pid(state.registry) do
+        GenServer.call(state.registry, :list_all)
+      else
+        apply(state.registry, :list_all, [])
+      end
+
+    # Filtrar por tipo de servicio si se especifica
+    workers_by_type =
+      if service_type do
+        all_workers
+        |> Enum.filter(fn worker ->
+          # Obtener el service_type del worker
+          worker_module = worker.__struct__
+          if function_exported?(worker_module, :service_type, 0) do
+            apply(worker_module, :service_type, []) == service_type
+          else
+            false
+          end
+        end)
+      else
+        all_workers
+      end
+
+    # Filtrar solo workers disponibles (excluir quota_exceeded y unavailable)
+    available =
+      workers_by_type
+      |> Enum.filter(fn worker ->
+        worker_name = worker.name
+        health = Map.get(state.health_status, worker_name, :unknown)
+        # Excluir workers con cuota agotada o no disponibles
+        health not in [:unavailable, :quota_exceeded, :rate_limited] and
+          (health == :available or health == :unknown)
+      end)
+
+    # Ordenar según la estrategia
+    Logger.debug("Strategy: #{inspect(state.strategy)}, Available LLM workers: #{length(available)} (#{Enum.map(available, & &1.name) |> Enum.join(", ")})")
+
+    case state.strategy do
+      :round_robin -> apply_round_robin_strategy(available, state)
+      _ -> apply_strategy(available, state.strategy)
+    end
+  end
+
+  defp apply_strategy(workers, :local_first) do
+    # Ordenar por prioridad (menor número = mayor prioridad)
+    Enum.sort_by(workers, fn worker ->
+      apply(worker.__struct__, :priority, [worker])
+    end)
+  end
+
+  defp apply_strategy(workers, :round_robin) do
+    # Esta función no se usa para round_robin, se maneja en apply_round_robin_strategy
+    Enum.shuffle(workers)
+  end
+
+  defp apply_strategy(workers, _), do: workers
+
+  defp apply_round_robin_strategy(workers, state) do
+    # Implementar round-robin real con estado
+    if Enum.empty?(workers) do
+      []
+    else
+      # Ordenar workers por nombre para consistencia
+      sorted_workers = Enum.sort_by(workers, & &1.name)
+
+      # Obtener el índice actual y rotar
+      current_index = rem(state.round_robin_index, length(sorted_workers))
+
+      # Rotar la lista para que el worker actual esté primero
+      {front, back} = Enum.split(sorted_workers, current_index)
+      rotated = back ++ front
+
+      # Debug logging
+      worker_names = Enum.map(sorted_workers, & &1.name)
+      rotated_names = Enum.map(rotated, & &1.name)
+
+      Logger.info(
+        "Round-robin: workers=#{inspect(worker_names)}, index=#{current_index}, rotated=#{inspect(rotated_names)}"
+      )
+
+      rotated
+    end
+  end
+
+  defp execute_with_failover([], _messages, _opts) do
+    {:error, :all_workers_failed}
+  end
+
+  defp execute_with_failover([worker | rest], messages, opts) do
+    execute_with_failover([worker | rest], messages, opts, [])
+  end
+
+  defp execute_with_failover([], _messages, _opts, error_details) when is_list(error_details) do
+    # Crear mensaje detallado con los errores de cada worker
+    detailed_errors =
+      error_details
+      |> Enum.map(fn {worker, error} -> "#{worker}: #{error}" end)
+      |> Enum.join("; ")
+
+    Logger.error("Todos los workers fallaron. Errores: #{detailed_errors}")
+    {:error, {:all_workers_failed, detailed_errors}}
+  end
+
+  defp execute_with_failover([worker | rest], messages, opts, error_details) do
+    Logger.debug("Intentando con worker: #{worker.name} (#{length(rest)} workers restantes en cola)")
+
+    case apply(worker.__struct__, :stream_completion, [worker, messages, opts]) do
+      {:ok, stream} ->
+        # Verificar que el stream no esté vacío
+        case validate_stream(stream) do
+          :ok ->
+            Logger.info("Worker #{worker.name} respondió exitosamente")
+            {:ok, stream}
+
+          {:error, :empty_stream} ->
+            error_msg = "stream vacío (posible error HTTP no capturado)"
+
+            Logger.warning(
+              "Worker #{worker.name} devolvió #{error_msg}, intentando con siguiente worker"
+            )
+
+            execute_with_failover(rest, messages, opts, [{worker.name, error_msg} | error_details])
+
+          {:error, :validation_timeout} ->
+            error_msg = "timeout de validación (posible bloqueo por error HTTP)"
+
+            Logger.warning(
+              "Worker #{worker.name} tuvo #{error_msg}, intentando con siguiente worker"
+            )
+
+            execute_with_failover(rest, messages, opts, [{worker.name, error_msg} | error_details])
+
+          {:error, :invalid_format} ->
+            error_msg = "formato de respuesta inválido"
+
+            Logger.warning(
+              "Worker #{worker.name} devolvió #{error_msg}, intentando con siguiente worker"
+            )
+
+            execute_with_failover(rest, messages, opts, [{worker.name, error_msg} | error_details])
+
+          {:error, :validation_error} ->
+            error_msg = "error de validación interno"
+
+            Logger.warning(
+              "Worker #{worker.name} tuvo #{error_msg}, intentando con siguiente worker"
+            )
+
+            execute_with_failover(rest, messages, opts, [{worker.name, error_msg} | error_details])
+        end
+
+      {:error, reason} ->
+        error_msg = format_error_reason(reason)
+        Logger.warning("Worker #{worker.name} falló: #{error_msg}")
+        execute_with_failover(rest, messages, opts, [{worker.name, error_msg} | error_details])
+    end
+  end
+
+  defp format_error_reason({status, message}) when is_integer(status),
+    do: "HTTP #{status}: #{message}"
+
+  defp format_error_reason(reason), do: inspect(reason)
+
+  defp perform_health_checks(state) do
+    workers =
+      if is_pid(state.registry) do
+        GenServer.call(state.registry, :list_all)
+      else
+        apply(state.registry, :list_all, [])
+      end
+
+    # Ejecutar health checks en paralelo
+    tasks =
+      Enum.map(workers, fn worker ->
+        Task.async(fn ->
+          status =
+            case apply(worker.__struct__, :health_check, [worker]) do
+              {:ok, status} -> status
+              {:error, {:quota_exceeded, _}} -> :quota_exceeded
+              {:error, {:rate_limited, _}} -> :rate_limited
+              {:error, _} -> :unavailable
+            end
+
+          {worker.name, status}
+        end)
+      end)
+
+    # Recolectar resultados con timeout
+    results =
+      tasks
+      |> Task.yield_many(5000)
+      |> Enum.map(fn {task, result} ->
+        case result do
+          {:ok, value} ->
+            value
+
+          _ ->
+            Task.shutdown(task, :brutal_kill)
+            nil
+        end
+      end)
+      |> Enum.reject(&is_nil/1)
+      |> Map.new()
+
+    Logger.info("Health check completado: #{inspect(results)}")
+    results
+  end
+
+  defp validate_stream(stream) do
+    # Usar un timeout más corto y mejor manejo de errores
+    task =
+      Task.async(fn ->
+        # Intentar obtener el primer elemento del stream con timeout
+        stream
+        |> Stream.take(1)
+        |> Enum.to_list()
+      end)
+
+    # 10 segundos timeout para modelos experimentales
+    case Task.yield(task, 10_000) do
+      {:ok, []} ->
+        Logger.warning("Stream vacío detectado - posible error HTTP (403/503) no manejado")
+        {:error, :empty_stream}
+
+      {:ok, [first | _]} when is_binary(first) and byte_size(first) > 0 ->
+        Logger.info("Stream válido detectado: #{byte_size(first)} bytes")
+        :ok
+
+      {:ok, [first | _]} ->
+        Logger.warning("Stream con formato inesperado: #{inspect(first)}")
+        {:error, :invalid_format}
+
+      nil ->
+        # Timeout - matar la tarea
+        Task.shutdown(task, :brutal_kill)
+        Logger.error("Timeout validando stream - posible bloqueo por error HTTP")
+        {:error, :validation_timeout}
+    end
+  rescue
+    error ->
+      Logger.error("Error validando stream: #{inspect(error)}")
+      {:error, :validation_error}
+  end
+
+  defp get_workers_by_provider(state, provider) do
+    all_workers =
+      if is_pid(state.registry) do
+        GenServer.call(state.registry, :list_all)
+      else
+        apply(state.registry, :list_all, [])
+      end
+
+    # Filtrar por provider y disponibilidad
+    all_workers
+    |> Enum.filter(fn worker ->
+      worker_name = worker.name
+      health = Map.get(state.health_status, worker_name, :unknown)
+
+      # Verificar que esté disponible y coincida con el provider
+      health == :available and String.contains?(worker_name, provider)
+    end)
+  end
+
+  defp get_workers_by_service_type(state, service_type) do
+    all_workers =
+      if is_pid(state.registry) do
+        GenServer.call(state.registry, :list_all)
+      else
+        apply(state.registry, :list_all, [])
+      end
+
+    # Filtrar por service_type y disponibilidad
+    filtered_workers =
+      all_workers
+      |> Enum.filter(fn worker ->
+        worker_module = worker.__struct__
+        worker_name = worker.name
+        health = Map.get(state.health_status, worker_name, :unknown)
+
+        # Verificar que implemente service_type/0 y coincida
+        worker_service_type =
+          if function_exported?(worker_module, :service_type, 0) do
+            apply(worker_module, :service_type, [])
+          else
+            nil
+          end
+
+        # Excluir workers no disponibles
+        is_available =
+          health not in [:unavailable, :quota_exceeded, :rate_limited] and
+            (health == :available or health == :unknown)
+
+        worker_service_type == service_type and is_available
+      end)
+
+    Logger.debug("Service type: #{service_type}, Available workers: #{length(filtered_workers)} (#{Enum.map(filtered_workers, & &1.name) |> Enum.join(", ")})")
+
+    filtered_workers
+  end
+
+  defp execute_service_with_workers([], _params, _opts) do
+    {:error, :no_workers_available}
+  end
+
+  defp execute_service_with_workers(workers, params, opts) do
+    execute_service_with_failover(workers, params, opts, [])
+  end
+
+  defp execute_service_with_failover([], _params, _opts, error_details)
+       when is_list(error_details) do
+    # Crear mensaje detallado con los errores de cada worker
+    detailed_errors =
+      error_details
+      |> Enum.map(fn {worker, error} -> "#{worker}: #{error}" end)
+      |> Enum.join("; ")
+
+    {:error, {:all_workers_failed, detailed_errors}}
+  end
+
+  defp execute_service_with_failover([worker | rest], params, opts, error_details) do
+    Logger.debug("Intentando servicio #{params[:messages] && ":llm" || ":generic"} con worker: #{worker.name} (#{length(rest)} workers restantes)")
+
+    try do
+      case CortexCore.Workers.Worker.invoke(worker, params, opts) do
+        {:ok, result} when is_function(result) or is_struct(result, Stream) ->
+          # Si es un stream, validar que el primer elemento funciona
+          validated_stream = validate_stream(result, worker)
+          model_info = get_worker_model_info(worker)
+          Logger.info("Worker #{worker.name} respondió exitosamente#{model_info}")
+          {:ok, validated_stream}
+
+        {:ok, result} ->
+          model_info = get_worker_model_info(worker)
+          Logger.info("Worker #{worker.name} respondió exitosamente#{model_info}")
+          {:ok, result}
+
+        {:error, reason} ->
+          error_msg = format_error_reason(reason)
+          Logger.warning("Worker #{worker.name} falló: #{error_msg}, intentando siguiente...")
+
+          execute_service_with_failover(rest, params, opts, [
+            {worker.name, error_msg} | error_details
+          ])
+      end
+    rescue
+      error ->
+        error_msg = Exception.message(error)
+
+        # Detectar si es un error 429 (rate limit) y si el worker tiene más API keys para rotar
+        if is_rate_limit_error?(error_msg) and can_rotate_api_key?(worker) do
+          # Verificar si ya intentamos todas las keys de este worker
+          rotation_key = "#{worker.name}_rotations"
+          rotations_count = Keyword.get(error_details, String.to_atom(rotation_key), 0)
+          max_rotations = length(worker.api_keys)
+
+          if rotations_count < max_rotations do
+            # Aún hay keys que probar, rotar
+            rotated_worker = rotate_worker_api_key(worker)
+            Logger.info("Worker #{worker.name} con rate limit, rotando a API key ##{rotated_worker.current_key_index + 1}/#{length(rotated_worker.api_keys)} (intento #{rotations_count + 1}/#{max_rotations})")
+
+            # Actualizar contador de rotaciones
+            updated_error_details = Keyword.put(error_details, String.to_atom(rotation_key), rotations_count + 1)
+
+            # Reintentar con el mismo worker pero con la siguiente API key
+            execute_service_with_failover([rotated_worker | rest], params, opts, updated_error_details)
+          else
+            # Ya probamos todas las keys, pasar al siguiente worker
+            Logger.warning("Worker #{worker.name} agotó todas sus #{max_rotations} API keys, intentando siguiente worker...")
+
+            execute_service_with_failover(rest, params, opts, [
+              {worker.name, "#{error_msg} (tried all #{max_rotations} API keys)"} | error_details
+            ])
+          end
+        else
+          Logger.warning("Worker #{worker.name} lanzó excepción: #{error_msg}, intentando siguiente...")
+
+          execute_service_with_failover(rest, params, opts, [
+            {worker.name, error_msg} | error_details
+          ])
+        end
+    end
+  end
+
+  # Valida que un stream puede comenzar a producir elementos sin error
+  defp validate_stream(stream, worker) do
+    # Intentar obtener el primer elemento para validar que el HTTP request fue exitoso
+    # Si falla, lanzará una excepción que será capturada por el rescue
+    case Enum.take(stream, 1) do
+      [] ->
+        # Stream vacío - puede ser un error silencioso
+        raise "Worker #{worker.name} retornó stream vacío"
+      [first] ->
+        # Primer elemento exitoso, retornar stream completo con el primer elemento
+        Stream.concat([first], stream)
+    end
+  end
+
+  # Detecta si un error es de tipo rate limit (HTTP 429)
+  defp is_rate_limit_error?(error_msg) when is_binary(error_msg) do
+    String.contains?(error_msg, "429") or
+      String.contains?(String.downcase(error_msg), "rate limit") or
+      String.contains?(String.downcase(error_msg), "quota")
+  end
+
+  defp is_rate_limit_error?(_), do: false
+
+  # Verifica si un worker puede rotar a otro API key
+  defp can_rotate_api_key?(worker) do
+    # Verificar que el worker tenga el campo api_keys y que tenga más de una key
+    Map.has_key?(worker, :api_keys) and
+      is_list(worker.api_keys) and
+      length(worker.api_keys) > 1 and
+      Map.has_key?(worker, :current_key_index)
+  end
+
+  # Rota el worker al siguiente API key
+  defp rotate_worker_api_key(worker) do
+    # Llamar al método rotate_api_key del worker si existe
+    worker_module = worker.__struct__
+
+    if function_exported?(worker_module, :rotate_api_key, 1) do
+      apply(worker_module, :rotate_api_key, [worker])
+    else
+      # Fallback: rotación manual si el worker no tiene el método
+      new_index = rem(worker.current_key_index + 1, length(worker.api_keys))
+      %{worker | current_key_index: new_index, last_rotation: DateTime.utc_now()}
+    end
+  end
+
+  # Obtiene información del modelo que está usando el worker
+  defp get_worker_model_info(worker) do
+    cond do
+      Map.has_key?(worker, :default_model) and worker.default_model ->
+        " (modelo: #{worker.default_model})"
+
+      Map.has_key?(worker, :model) and worker.model ->
+        " (modelo: #{worker.model})"
+
+      true ->
+        ""
+    end
+  end
+end

@@ -9,6 +9,7 @@ defmodule CortexCore.Workers.Supervisor do
   """
 
   use Supervisor
+  require Logger
 
   alias CortexCore.Workers.{Registry, Pool}
 
@@ -21,7 +22,11 @@ defmodule CortexCore.Workers.Supervisor do
     OpenAIEmbeddingsWorker,
     AnthropicWorker,
     XAIWorker,
-    TavilyWorker
+    TavilyWorker,
+    SerperWorker,
+    BraveWorker,
+    DuckDuckGoWorker,
+    PubMedWorker
   }
 
   def start_link(opts \\ []) do
@@ -46,7 +51,7 @@ defmodule CortexCore.Workers.Supervisor do
         _ -> :local_first
       end
 
-    IO.puts("🎯 Pool strategy configurada: #{inspect(strategy)} (desde env: #{env_strategy})")
+    Logger.info("Pool strategy configurada: #{inspect(strategy)} (desde env: #{env_strategy})")
 
     # Leer intervalo de health check desde environment
     health_check_interval =
@@ -137,6 +142,22 @@ defmodule CortexCore.Workers.Supervisor do
         worker = TavilyWorker.new(Keyword.put(worker_opts, :name, name))
         Registry.register(registry_name, name, worker)
 
+      :serper ->
+        worker = SerperWorker.new(Keyword.put(worker_opts, :name, name))
+        Registry.register(registry_name, name, worker)
+
+      :brave ->
+        worker = BraveWorker.new(Keyword.put(worker_opts, :name, name))
+        Registry.register(registry_name, name, worker)
+
+      :pubmed ->
+        worker = PubMedWorker.new(Keyword.put(worker_opts, :name, name))
+        Registry.register(registry_name, name, worker)
+
+      :duckduckgo ->
+        worker = DuckDuckGoWorker.new(Keyword.put(worker_opts, :name, name))
+        Registry.register(registry_name, name, worker)
+
       _ ->
         {:error, :unsupported_worker_type}
     end
@@ -183,28 +204,32 @@ defmodule CortexCore.Workers.Supervisor do
       # Embeddings Workers
       |> maybe_add_openai_embeddings_worker()
       # Search Workers
+      |> maybe_add_serper_worker()
+      |> maybe_add_brave_worker()
+      |> maybe_add_pubmed_worker()
       |> maybe_add_tavily_worker()
+      |> maybe_add_duckduckgo_worker()
 
     # Registrar todos los workers configurados
     Enum.each(workers_to_register, fn {name, worker} ->
       case Registry.register(registry_name, name, worker) do
         :ok ->
-          IO.puts("✅ Worker registrado: #{name}")
+          Logger.info("Worker registrado: #{name}")
 
         {:error, :already_registered} ->
-          IO.puts("⚠️  Worker ya existe: #{name}")
+          Logger.warning("Worker ya existe: #{name}")
 
         error ->
-          IO.puts("❌ Error registrando worker #{name}: #{inspect(error)}")
+          Logger.error("Error registrando worker #{name}: #{inspect(error)}")
       end
     end)
 
     # Mostrar resumen de workers configurados
     if Enum.empty?(workers_to_register) do
-      IO.puts("⚠️  No se encontraron API keys válidos. Revisa tu archivo .env")
+      Logger.warning("No se encontraron API keys válidos. Revisa tu archivo .env")
     else
-      IO.puts(
-        "🚀 Configurados #{length(workers_to_register)} workers: #{Enum.map(workers_to_register, &elem(&1, 0)) |> Enum.join(", ")}"
+      Logger.info(
+        "Configurados #{length(workers_to_register)} workers: #{Enum.map(workers_to_register, &elem(&1, 0)) |> Enum.join(", ")}"
       )
     end
   end
@@ -311,12 +336,13 @@ defmodule CortexCore.Workers.Supervisor do
 
     if not Enum.empty?(groq_keys) do
       groq_model = System.get_env("GROQ_MODEL", "llama-3.1-8b-instant")
+      Logger.info("Configurando Groq worker con modelo: #{groq_model}")
 
       worker =
         GroqWorker.new(
           name: "groq-primary",
           api_keys: groq_keys,
-          model: groq_model,
+          default_model: groq_model,
           timeout: 30_000
         )
 
@@ -386,13 +412,13 @@ defmodule CortexCore.Workers.Supervisor do
         [{"ollama-local", worker} | workers]
 
       false ->
-        IO.puts("⚠️  Ollama no disponible en #{ollama_url}")
+        Logger.warning("Ollama no disponible en #{ollama_url}")
         workers
     end
   end
 
   defp check_ollama_availability(base_url) do
-    case Req.get(base_url <> "/api/tags", receive_timeout: 2000) do
+    case Req.get(base_url <> "/api/tags", receive_timeout: 2000, retry: false) do
       {:ok, %{status: 200}} -> true
       _ -> false
     end
@@ -436,6 +462,66 @@ defmodule CortexCore.Workers.Supervisor do
     else
       workers
     end
+  end
+
+  defp maybe_add_serper_worker(workers) do
+    serper_keys = get_env_list("SERPER_API_KEY")
+
+    if not Enum.empty?(serper_keys) do
+      worker =
+        SerperWorker.new(
+          name: "serper-primary",
+          api_keys: serper_keys,
+          timeout: 30_000
+        )
+
+      [{"serper-primary", worker} | workers]
+    else
+      workers
+    end
+  end
+
+  defp maybe_add_brave_worker(workers) do
+    brave_keys = get_env_list("BRAVE_API_KEY")
+
+    if not Enum.empty?(brave_keys) do
+      worker =
+        BraveWorker.new(
+          name: "brave-primary",
+          api_keys: brave_keys,
+          timeout: 30_000
+        )
+
+      [{"brave-primary", worker} | workers]
+    else
+      workers
+    end
+  end
+
+  defp maybe_add_pubmed_worker(workers) do
+    # PubMed no requiere API key (NCBI E-utilities es gratuito)
+    # Opcional: agregar email para mejor rate limiting
+    pubmed_email = System.get_env("PUBMED_EMAIL")
+
+    worker =
+      PubMedWorker.new(
+        name: "pubmed-primary",
+        email: pubmed_email,
+        timeout: 30_000
+      )
+
+    [{"pubmed-primary", worker} | workers]
+  end
+
+  defp maybe_add_duckduckgo_worker(workers) do
+    # DuckDuckGo no requiere API key
+    worker =
+      DuckDuckGoWorker.new(
+        name: "duckduckgo-primary",
+        timeout: 30_000
+      )
+
+    [{"duckduckgo-primary", worker} | workers]
   end
 
   defp get_registry_name(_supervisor) do

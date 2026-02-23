@@ -67,7 +67,7 @@ coverage/
 *.livemd
 
 # Generated escript
-cortex_core
+/cortex_core
 
 # Hex docs tarball
 cortex_core-*.tar
