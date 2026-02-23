@@ -315,7 +315,7 @@ defmodule CortexCore.Workers.Supervisor do
     gemini_pro_25_keys = get_env_list("GEMINI_PRO_25_API_KEYS")
 
     if not Enum.empty?(gemini_pro_25_keys) do
-      gemini_pro_25_model = System.get_env("GEMINI_PRO_25_MODEL", "gemini-2.5-pro")
+      gemini_pro_25_model = System.get_env("GEMINI_PRO_25_MODEL", "gemini-3-flash-preview")
 
       worker =
         GeminiWorker.new(
@@ -356,7 +356,7 @@ defmodule CortexCore.Workers.Supervisor do
     gemini_keys = get_env_list("GEMINI_API_KEYS")
 
     if not Enum.empty?(gemini_keys) do
-      gemini_model = System.get_env("GEMINI_MODEL", "gemini-2.0-flash-001")
+      gemini_model = System.get_env("GEMINI_MODEL", "gemini-3-flash-preview")
 
       worker =
         GeminiWorker.new(

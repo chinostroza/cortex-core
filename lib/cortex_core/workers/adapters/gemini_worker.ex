@@ -30,9 +30,8 @@ defmodule CortexCore.Workers.Adapters.GeminiWorker do
   ]
   
   @default_timeout 60_000
-  @default_model "gemini-2.0-flash-001"
+  @default_model "gemini-3-flash-preview"
   @base_url "https://generativelanguage.googleapis.com"
-  @stream_endpoint "/v1beta/models/gemini-2.0-flash-001:generateContent"
   
   @doc """
   Crea una nueva instancia de GeminiWorker.
@@ -82,9 +81,9 @@ defmodule CortexCore.Workers.Adapters.GeminiWorker do
       base_url: @base_url,
       default_model: worker.default_model,
       available_models: [
-        "gemini-2.0-flash-001",
-        "gemini-1.5-pro",
-        "gemini-1.5-flash"
+        "gemini-3-flash-preview",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite"
       ]
     })
   end
@@ -94,10 +93,11 @@ defmodule CortexCore.Workers.Adapters.GeminiWorker do
   
   # Callbacks para APIWorkerBase
   
-  def provider_config(_worker) do
+  def provider_config(worker) do
+    model = worker.default_model || @default_model
     %{
       base_url: @base_url,
-      stream_endpoint: @stream_endpoint,
+      stream_endpoint: "/v1beta/models/#{model}:generateContent",
       health_endpoint: @base_url <> "/v1beta/models",
       model_param: "model",
       headers_fn: &build_headers/1,
