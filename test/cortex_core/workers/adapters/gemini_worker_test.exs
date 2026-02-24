@@ -36,17 +36,31 @@ defmodule CortexCore.Workers.Adapters.GeminiWorkerTest do
 
     test "converts multiple tools" do
       tools = [
-        %{"type" => "function", "function" => %{"name" => "fn1", "description" => "d1", "parameters" => %{}}},
-        %{"type" => "function", "function" => %{"name" => "fn2", "description" => "d2", "parameters" => %{}}}
+        %{
+          "type" => "function",
+          "function" => %{"name" => "fn1", "description" => "d1", "parameters" => %{}}
+        },
+        %{
+          "type" => "function",
+          "function" => %{"name" => "fn2", "description" => "d2", "parameters" => %{}}
+        }
       ]
 
-      %{"tools" => [%{"function_declarations" => declarations}]} = GeminiWorker.transform_tools(tools)
+      %{"tools" => [%{"function_declarations" => declarations}]} =
+        GeminiWorker.transform_tools(tools)
+
       assert length(declarations) == 2
       assert Enum.map(declarations, & &1["name"]) == ["fn1", "fn2"]
     end
 
     test "wraps all declarations in a single tools entry" do
-      tools = [%{"type" => "function", "function" => %{"name" => "f", "description" => "d", "parameters" => %{}}}]
+      tools = [
+        %{
+          "type" => "function",
+          "function" => %{"name" => "f", "description" => "d", "parameters" => %{}}
+        }
+      ]
+
       %{"tools" => tools_list} = GeminiWorker.transform_tools(tools)
       assert length(tools_list) == 1
     end
@@ -59,7 +73,12 @@ defmodule CortexCore.Workers.Adapters.GeminiWorkerTest do
           %{
             "content" => %{
               "parts" => [
-                %{"functionCall" => %{"name" => "extract", "args" => %{"name" => "UserAuth", "priority" => "high"}}}
+                %{
+                  "functionCall" => %{
+                    "name" => "extract",
+                    "args" => %{"name" => "UserAuth", "priority" => "high"}
+                  }
+                }
               ]
             }
           }
@@ -68,7 +87,8 @@ defmodule CortexCore.Workers.Adapters.GeminiWorkerTest do
 
       result = GeminiWorker.extract_tool_calls(body)
 
-      assert [%{name: "extract", arguments: %{"name" => "UserAuth", "priority" => "high"}}] = result
+      assert [%{name: "extract", arguments: %{"name" => "UserAuth", "priority" => "high"}}] =
+               result
     end
 
     test "ignores non-functionCall parts" do

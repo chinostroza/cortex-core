@@ -4,14 +4,15 @@ defmodule CortexCore.Workers.Adapters.OpenAIWorkerTest do
 
   setup do
     bypass = Bypass.open()
-    
-    worker = OpenAIWorker.new([
-      name: "test_openai",
-      api_keys: ["test_key_1", "test_key_2"],
-      default_model: "gpt-5",
-      timeout: 30_000,
-      base_url: "http://localhost:#{bypass.port}"
-    ])
+
+    worker =
+      OpenAIWorker.new(
+        name: "test_openai",
+        api_keys: ["test_key_1", "test_key_2"],
+        default_model: "gpt-5",
+        timeout: 30_000,
+        base_url: "http://localhost:#{bypass.port}"
+      )
 
     on_exit(fn ->
       Bypass.down(bypass)
@@ -22,11 +23,12 @@ defmodule CortexCore.Workers.Adapters.OpenAIWorkerTest do
 
   describe "new/1" do
     test "creates worker with required fields" do
-      worker = OpenAIWorker.new([
-        name: "test_worker",
-        api_keys: ["key1", "key2"],
-        default_model: "gpt-5"
-      ])
+      worker =
+        OpenAIWorker.new(
+          name: "test_worker",
+          api_keys: ["key1", "key2"],
+          default_model: "gpt-5"
+        )
 
       assert worker.name == "test_worker"
       assert worker.api_keys == ["key1", "key2"]
@@ -35,10 +37,11 @@ defmodule CortexCore.Workers.Adapters.OpenAIWorkerTest do
     end
 
     test "uses default values for optional fields" do
-      worker = OpenAIWorker.new([
-        name: "test_worker",
-        api_keys: ["key1"]
-      ])
+      worker =
+        OpenAIWorker.new(
+          name: "test_worker",
+          api_keys: ["key1"]
+        )
 
       assert worker.default_model == "gpt-5"
       assert worker.timeout == 30_000
@@ -75,21 +78,22 @@ defmodule CortexCore.Workers.Adapters.OpenAIWorkerTest do
         assert auth_header == ["Bearer test_key_1"]
 
         # Mock streaming response
-        conn = conn
-        |> Plug.Conn.put_resp_header("content-type", "text/event-stream")
-        |> Plug.Conn.send_chunked(200)
-        
-        {:ok, conn} = Plug.Conn.chunk(conn, "data: #{Jason.encode!(%{
-          "choices" => [%{
-            "delta" => %{"content" => "Hello"}
-          }]
-        })}\n\n")
-        
+        conn =
+          conn
+          |> Plug.Conn.put_resp_header("content-type", "text/event-stream")
+          |> Plug.Conn.send_chunked(200)
+
+        {:ok, conn} =
+          Plug.Conn.chunk(
+            conn,
+            "data: #{Jason.encode!(%{"choices" => [%{"delta" => %{"content" => "Hello"}}]})}\n\n"
+          )
+
         {:ok, _conn} = Plug.Conn.chunk(conn, "data: [DONE]\n\n")
       end)
 
       assert {:ok, stream} = OpenAIWorker.stream_completion(worker, messages, [])
-      
+
       # Verify stream produces content
       content = stream |> Enum.take(5) |> Enum.join("")
       assert String.contains?(content, "Hello")
@@ -99,38 +103,48 @@ defmodule CortexCore.Workers.Adapters.OpenAIWorkerTest do
       messages = [%{"role" => "user", "content" => "Hello"}]
 
       Bypass.expect_once(bypass, "POST", "/v1/chat/completions", fn conn ->
-        Plug.Conn.resp(conn, 400, Jason.encode!(%{
-          "error" => %{
-            "message" => "Invalid request",
-            "type" => "invalid_request_error"
-          }
-        }))
+        Plug.Conn.resp(
+          conn,
+          400,
+          Jason.encode!(%{
+            "error" => %{
+              "message" => "Invalid request",
+              "type" => "invalid_request_error"
+            }
+          })
+        )
       end)
 
       # Streaming APIs return {:ok, stream} even for errors
       assert {:ok, stream} = OpenAIWorker.stream_completion(worker, messages, [])
       # Errors are handled when consuming the stream
       content = stream |> Enum.take(1) |> Enum.join("")
-      assert content == ""  # No content for error responses
+      # No content for error responses
+      assert content == ""
     end
 
     test "handles rate limiting", %{worker: worker, bypass: bypass} do
       messages = [%{"role" => "user", "content" => "Hello"}]
 
       Bypass.expect_once(bypass, "POST", "/v1/chat/completions", fn conn ->
-        Plug.Conn.resp(conn, 429, Jason.encode!(%{
-          "error" => %{
-            "message" => "Rate limit exceeded",
-            "type" => "rate_limit_error"
-          }
-        }))
+        Plug.Conn.resp(
+          conn,
+          429,
+          Jason.encode!(%{
+            "error" => %{
+              "message" => "Rate limit exceeded",
+              "type" => "rate_limit_error"
+            }
+          })
+        )
       end)
 
       # Streaming APIs return {:ok, stream} even for rate limits
       assert {:ok, stream} = OpenAIWorker.stream_completion(worker, messages, [])
       # Rate limit errors are handled when consuming the stream
       content = stream |> Enum.take(1) |> Enum.join("")
-      assert content == ""  # No content for rate limit responses
+      # No content for rate limit responses
+      assert content == ""
     end
 
     test "rotates API keys on failure", %{worker: worker} do
@@ -142,7 +156,7 @@ defmodule CortexCore.Workers.Adapters.OpenAIWorkerTest do
 
     test "validates message format", %{worker: worker} do
       invalid_messages = [%{"invalid" => "format"}]
-      
+
       # Even invalid messages return a stream, validation happens server-side
       result = OpenAIWorker.stream_completion(worker, invalid_messages, [])
       assert match?({:ok, _stream}, result)
@@ -183,11 +197,13 @@ defmodule CortexCore.Workers.Adapters.OpenAIWorkerTest do
       models = ["gpt-5", "gpt-4-turbo", "gpt-3.5-turbo"]
 
       for model <- models do
-        worker = OpenAIWorker.new([
-          name: "test_#{model}",
-          api_keys: ["key"],
-          default_model: model  # Use default_model key instead of model
-        ])
+        worker =
+          OpenAIWorker.new(
+            name: "test_#{model}",
+            api_keys: ["key"],
+            # Use default_model key instead of model
+            default_model: model
+          )
 
         assert worker.default_model == model
       end
@@ -208,17 +224,18 @@ defmodule CortexCore.Workers.Adapters.OpenAIWorkerTest do
         conn = Plug.Conn.put_resp_header(conn, "content-type", "text/event-stream")
         conn = Plug.Conn.send_chunked(conn, 200)
 
-        final_conn = Enum.reduce(responses, conn, fn response, acc_conn ->
-          {:ok, new_conn} = Plug.Conn.chunk(acc_conn, "data: #{Jason.encode!(response)}\n\n")
-          new_conn
-        end)
-        
+        final_conn =
+          Enum.reduce(responses, conn, fn response, acc_conn ->
+            {:ok, new_conn} = Plug.Conn.chunk(acc_conn, "data: #{Jason.encode!(response)}\n\n")
+            new_conn
+          end)
+
         {:ok, _conn} = Plug.Conn.chunk(final_conn, "data: [DONE]\n\n")
       end)
 
       {:ok, stream} = OpenAIWorker.stream_completion(worker, messages, [])
       content = stream |> Enum.take(10) |> Enum.join("")
-      
+
       assert String.contains?(content, "Hello")
       assert String.contains?(content, "world")
       assert String.contains?(content, "!")
@@ -229,24 +246,26 @@ defmodule CortexCore.Workers.Adapters.OpenAIWorkerTest do
 
       Bypass.expect_once(bypass, "POST", "/v1/chat/completions", fn conn ->
         responses = [
-          %{"choices" => [%{"delta" => %{}}]}, # Empty delta
+          # Empty delta
+          %{"choices" => [%{"delta" => %{}}]},
           %{"choices" => [%{"delta" => %{"content" => "Hello"}}]}
         ]
 
         conn = Plug.Conn.put_resp_header(conn, "content-type", "text/event-stream")
         conn = Plug.Conn.send_chunked(conn, 200)
 
-        final_conn = Enum.reduce(responses, conn, fn response, acc_conn ->
-          {:ok, new_conn} = Plug.Conn.chunk(acc_conn, "data: #{Jason.encode!(response)}\n\n")
-          new_conn
-        end)
-        
+        final_conn =
+          Enum.reduce(responses, conn, fn response, acc_conn ->
+            {:ok, new_conn} = Plug.Conn.chunk(acc_conn, "data: #{Jason.encode!(response)}\n\n")
+            new_conn
+          end)
+
         {:ok, _conn} = Plug.Conn.chunk(final_conn, "data: [DONE]\n\n")
       end)
 
       {:ok, stream} = OpenAIWorker.stream_completion(worker, messages, [])
       content = stream |> Enum.take(5) |> Enum.join("")
-      
+
       assert String.contains?(content, "Hello")
     end
   end

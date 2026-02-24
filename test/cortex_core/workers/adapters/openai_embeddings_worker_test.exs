@@ -9,72 +9,78 @@ defmodule CortexCore.Workers.Adapters.OpenAIEmbeddingsWorkerTest do
       # Simulate successful embedding response
       case opts[:json][:input] do
         "test" ->
-          {:ok, %{
-            status: 200,
-            body: %{
-              "data" => [
-                %{
-                  "embedding" => Enum.map(1..1536, fn _ -> :rand.uniform() end),
-                  "index" => 0
-                }
-              ],
-              "model" => "text-embedding-3-small",
-              "usage" => %{
-                "prompt_tokens" => 1,
-                "total_tokens" => 1
-              }
-            }
-          }}
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => [
+                 %{
+                   "embedding" => Enum.map(1..1536, fn _ -> :rand.uniform() end),
+                   "index" => 0
+                 }
+               ],
+               "model" => "text-embedding-3-small",
+               "usage" => %{
+                 "prompt_tokens" => 1,
+                 "total_tokens" => 1
+               }
+             }
+           }}
 
         ["text1", "text2", "text3"] ->
-          {:ok, %{
-            status: 200,
-            body: %{
-              "data" => [
-                %{"embedding" => Enum.map(1..1536, fn _ -> :rand.uniform() end), "index" => 0},
-                %{"embedding" => Enum.map(1..1536, fn _ -> :rand.uniform() end), "index" => 1},
-                %{"embedding" => Enum.map(1..1536, fn _ -> :rand.uniform() end), "index" => 2}
-              ],
-              "model" => "text-embedding-3-small",
-              "usage" => %{
-                "prompt_tokens" => 6,
-                "total_tokens" => 6
-              }
-            }
-          }}
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => [
+                 %{"embedding" => Enum.map(1..1536, fn _ -> :rand.uniform() end), "index" => 0},
+                 %{"embedding" => Enum.map(1..1536, fn _ -> :rand.uniform() end), "index" => 1},
+                 %{"embedding" => Enum.map(1..1536, fn _ -> :rand.uniform() end), "index" => 2}
+               ],
+               "model" => "text-embedding-3-small",
+               "usage" => %{
+                 "prompt_tokens" => 6,
+                 "total_tokens" => 6
+               }
+             }
+           }}
 
         "rate_limit_test" ->
-          {:ok, %{
-            status: 429,
-            body: %{
-              "error" => %{
-                "message" => "Rate limit reached for requests",
-                "type" => "tokens"
-              }
-            }
-          }}
+          {:ok,
+           %{
+             status: 429,
+             body: %{
+               "error" => %{
+                 "message" => "Rate limit reached for requests",
+                 "type" => "tokens"
+               }
+             }
+           }}
 
         "quota_test" ->
-          {:ok, %{
-            status: 429,
-            body: %{
-              "error" => %{
-                "message" => "You exceeded your current quota, please check your plan and billing details",
-                "type" => "insufficient_quota"
-              }
-            }
-          }}
+          {:ok,
+           %{
+             status: 429,
+             body: %{
+               "error" => %{
+                 "message" =>
+                   "You exceeded your current quota, please check your plan and billing details",
+                 "type" => "insufficient_quota"
+               }
+             }
+           }}
 
         "long_text" ->
-          {:ok, %{
-            status: 400,
-            body: %{
-              "error" => %{
-                "message" => "This input is too long",
-                "type" => "invalid_request_error"
-              }
-            }
-          }}
+          {:ok,
+           %{
+             status: 400,
+             body: %{
+               "error" => %{
+                 "message" => "This input is too long",
+                 "type" => "invalid_request_error"
+               }
+             }
+           }}
 
         _ ->
           {:ok, %{status: 500, body: "Internal server error"}}
@@ -89,10 +95,11 @@ defmodule CortexCore.Workers.Adapters.OpenAIEmbeddingsWorkerTest do
 
   describe "new/1" do
     test "creates worker with valid options" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test-worker",
-        api_keys: ["sk-test-key"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test-worker",
+          api_keys: ["sk-test-key"]
+        )
 
       assert worker.name == "test-worker"
       assert worker.api_keys == ["sk-test-key"]
@@ -101,20 +108,22 @@ defmodule CortexCore.Workers.Adapters.OpenAIEmbeddingsWorkerTest do
     end
 
     test "creates worker with multiple API keys" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test-worker",
-        api_keys: ["key1", "key2", "key3"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test-worker",
+          api_keys: ["key1", "key2", "key3"]
+        )
 
       assert length(worker.api_keys) == 3
     end
 
     test "accepts custom model" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test-worker",
-        api_keys: ["sk-test"],
-        default_model: "text-embedding-3-large"
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test-worker",
+          api_keys: ["sk-test"],
+          default_model: "text-embedding-3-large"
+        )
 
       assert worker.default_model == "text-embedding-3-large"
     end
@@ -134,10 +143,11 @@ defmodule CortexCore.Workers.Adapters.OpenAIEmbeddingsWorkerTest do
 
   describe "info/1" do
     test "returns worker information" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test-worker",
-        api_keys: ["sk-test1", "sk-test2"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test-worker",
+          api_keys: ["sk-test1", "sk-test2"]
+        )
 
       info = OpenAIEmbeddingsWorker.info(worker)
 
@@ -153,10 +163,11 @@ defmodule CortexCore.Workers.Adapters.OpenAIEmbeddingsWorkerTest do
 
   describe "priority/1" do
     test "returns priority 10" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test",
-        api_keys: ["sk-test"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test",
+          api_keys: ["sk-test"]
+        )
 
       assert OpenAIEmbeddingsWorker.priority(worker) == 10
     end
@@ -164,17 +175,19 @@ defmodule CortexCore.Workers.Adapters.OpenAIEmbeddingsWorkerTest do
 
   describe "call/3 - single embedding" do
     test "embeds single text successfully" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test",
-        api_keys: ["sk-test"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test",
+          api_keys: ["sk-test"]
+        )
 
-      {:ok, result} = OpenAIEmbeddingsWorker.call(
-        worker,
-        %{input: "test"},
-        [],
-        MockHTTPClient
-      )
+      {:ok, result} =
+        OpenAIEmbeddingsWorker.call(
+          worker,
+          %{input: "test"},
+          [],
+          MockHTTPClient
+        )
 
       assert is_list(result.embedding)
       assert length(result.embedding) == 1536
@@ -186,33 +199,37 @@ defmodule CortexCore.Workers.Adapters.OpenAIEmbeddingsWorkerTest do
     end
 
     test "returns error when input is missing" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test",
-        api_keys: ["sk-test"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test",
+          api_keys: ["sk-test"]
+        )
 
-      assert {:error, :missing_input} = OpenAIEmbeddingsWorker.call(
-        worker,
-        %{},
-        [],
-        MockHTTPClient
-      )
+      assert {:error, :missing_input} =
+               OpenAIEmbeddingsWorker.call(
+                 worker,
+                 %{},
+                 [],
+                 MockHTTPClient
+               )
     end
   end
 
   describe "call/3 - batch embedding" do
     test "embeds multiple texts successfully" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test",
-        api_keys: ["sk-test"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test",
+          api_keys: ["sk-test"]
+        )
 
-      {:ok, result} = OpenAIEmbeddingsWorker.call(
-        worker,
-        %{input: ["text1", "text2", "text3"]},
-        [],
-        MockHTTPClient
-      )
+      {:ok, result} =
+        OpenAIEmbeddingsWorker.call(
+          worker,
+          %{input: ["text1", "text2", "text3"]},
+          [],
+          MockHTTPClient
+        )
 
       assert is_list(result.embeddings)
       assert length(result.embeddings) == 3
@@ -223,86 +240,97 @@ defmodule CortexCore.Workers.Adapters.OpenAIEmbeddingsWorkerTest do
     end
 
     test "returns error when batch is too large" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test",
-        api_keys: ["sk-test"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test",
+          api_keys: ["sk-test"]
+        )
 
       large_batch = Enum.map(1..2049, fn i -> "text#{i}" end)
 
-      assert {:error, :batch_too_large} = OpenAIEmbeddingsWorker.call(
-        worker,
-        %{input: large_batch},
-        [],
-        MockHTTPClient
-      )
+      assert {:error, :batch_too_large} =
+               OpenAIEmbeddingsWorker.call(
+                 worker,
+                 %{input: large_batch},
+                 [],
+                 MockHTTPClient
+               )
     end
   end
 
   describe "call/3 - error handling" do
     test "handles rate limit error" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test",
-        api_keys: ["sk-test"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test",
+          api_keys: ["sk-test"]
+        )
 
-      {:error, :rate_limited} = OpenAIEmbeddingsWorker.call(
-        worker,
-        %{input: "rate_limit_test"},
-        [],
-        MockHTTPClient
-      )
+      {:error, :rate_limited} =
+        OpenAIEmbeddingsWorker.call(
+          worker,
+          %{input: "rate_limit_test"},
+          [],
+          MockHTTPClient
+        )
     end
 
     test "handles quota exceeded error" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test",
-        api_keys: ["sk-test"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test",
+          api_keys: ["sk-test"]
+        )
 
-      {:error, :quota_exceeded} = OpenAIEmbeddingsWorker.call(
-        worker,
-        %{input: "quota_test"},
-        [],
-        MockHTTPClient
-      )
+      {:error, :quota_exceeded} =
+        OpenAIEmbeddingsWorker.call(
+          worker,
+          %{input: "quota_test"},
+          [],
+          MockHTTPClient
+        )
     end
 
     test "handles input too long error" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test",
-        api_keys: ["sk-test"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test",
+          api_keys: ["sk-test"]
+        )
 
-      {:error, :input_too_long} = OpenAIEmbeddingsWorker.call(
-        worker,
-        %{input: "long_text"},
-        [],
-        MockHTTPClient
-      )
+      {:error, :input_too_long} =
+        OpenAIEmbeddingsWorker.call(
+          worker,
+          %{input: "long_text"},
+          [],
+          MockHTTPClient
+        )
     end
   end
 
   describe "health_check/2" do
     test "returns :available when API is healthy" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test",
-        api_keys: ["sk-test"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test",
+          api_keys: ["sk-test"]
+        )
 
-      assert {:ok, :available} = OpenAIEmbeddingsWorker.health_check(
-        worker,
-        MockHTTPClient
-      )
+      assert {:ok, :available} =
+               OpenAIEmbeddingsWorker.health_check(
+                 worker,
+                 MockHTTPClient
+               )
     end
   end
 
   describe "rotate_api_key/1" do
     test "rotates to next API key" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test",
-        api_keys: ["key1", "key2", "key3"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test",
+          api_keys: ["key1", "key2", "key3"]
+        )
 
       assert worker.current_key_index == 0
       assert OpenAIEmbeddingsWorker.current_api_key(worker) == "key1"
@@ -322,10 +350,11 @@ defmodule CortexCore.Workers.Adapters.OpenAIEmbeddingsWorkerTest do
     end
 
     test "sets last_rotation timestamp" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test",
-        api_keys: ["key1", "key2"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test",
+          api_keys: ["key1", "key2"]
+        )
 
       assert is_nil(worker.last_rotation)
 
@@ -337,17 +366,19 @@ defmodule CortexCore.Workers.Adapters.OpenAIEmbeddingsWorkerTest do
 
   describe "cost calculation" do
     test "calculates cost for text-embedding-3-small" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test",
-        api_keys: ["sk-test"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test",
+          api_keys: ["sk-test"]
+        )
 
-      {:ok, result} = OpenAIEmbeddingsWorker.call(
-        worker,
-        %{input: "test", model: "text-embedding-3-small"},
-        [],
-        MockHTTPClient
-      )
+      {:ok, result} =
+        OpenAIEmbeddingsWorker.call(
+          worker,
+          %{input: "test", model: "text-embedding-3-small"},
+          [],
+          MockHTTPClient
+        )
 
       # 1 token * $0.020 / 1M = 0.00000002
       assert result.cost_usd < 0.0001

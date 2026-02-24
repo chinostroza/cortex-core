@@ -16,9 +16,9 @@ defmodule CortexCore.Workers.RegistryTest do
   describe "register/3" do
     test "registers a worker successfully", %{registry: registry} do
       worker = %{name: "test_worker", type: :openai}
-      
+
       assert :ok = Registry.register(registry, "test_worker", worker)
-      
+
       # Verify registration - Registry.list_all returns only workers, not {name, worker} tuples
       workers = Registry.list_all(registry)
       assert length(workers) == 1
@@ -59,7 +59,7 @@ defmodule CortexCore.Workers.RegistryTest do
       assert :ok = Registry.unregister(registry, "test_worker")
 
       workers = Registry.list_all(registry)
-      assert length(workers) == 0
+      assert workers == []
     end
 
     test "returns ok even if worker doesn't exist", %{registry: registry} do
@@ -86,57 +86,84 @@ defmodule CortexCore.Workers.RegistryTest do
     end
   end
 
-  # NOTE: Registry.get_worker/2 function doesn't exist in the current implementation
-  # describe "get_worker/2" do
-  #   test "returns worker when it exists", %{registry: registry} do
-  #     worker = %{name: "test_worker", type: :openai}
-  #     Registry.register(registry, "test_worker", worker)
+  describe "get/2" do
+    test "returns worker when it exists", %{registry: registry} do
+      worker = %{name: "test_worker", type: :openai}
+      Registry.register(registry, "test_worker", worker)
 
-  #     assert {:ok, ^worker} = Registry.get_worker(registry, "test_worker")
-  #   end
+      assert {:ok, ^worker} = Registry.get(registry, "test_worker")
+    end
 
-  #   test "returns error when worker doesn't exist", %{registry: registry} do
-  #     assert {:error, :not_found} = Registry.get_worker(registry, "nonexistent")
-  #   end
-  # end
+    test "returns error when worker doesn't exist", %{registry: registry} do
+      assert {:error, :not_found} = Registry.get(registry, "nonexistent")
+    end
+  end
 
-  # NOTE: Registry.list_by_type/2 and Registry.count/1 functions don't exist in the current implementation
-  # describe "list_by_type/2" do
-  #   test "returns workers filtered by type", %{registry: registry} do
-  #     openai_worker = %{name: "openai1", type: :openai}
-  #     anthropic_worker = %{name: "anthropic1", type: :anthropic}
-      
-  #     Registry.register(registry, "openai1", openai_worker)
-  #     Registry.register(registry, "anthropic1", anthropic_worker)
+  describe "count/1" do
+    test "returns 0 when no workers registered", %{registry: registry} do
+      assert 0 = Registry.count(registry)
+    end
 
-  #     openai_workers = Registry.list_by_type(registry, :openai)
-  #     assert length(openai_workers) == 1
-  #     assert {"openai1", openai_worker} in openai_workers
+    test "returns correct count after registrations", %{registry: registry} do
+      worker1 = %{name: "worker1", type: :openai}
+      worker2 = %{name: "worker2", type: :anthropic}
 
-  #     anthropic_workers = Registry.list_by_type(registry, :anthropic)
-  #     assert length(anthropic_workers) == 1
-  #     assert {"anthropic1", anthropic_worker} in anthropic_workers
-  #   end
+      Registry.register(registry, "worker1", worker1)
+      assert 1 = Registry.count(registry)
 
-  #   test "returns empty list when no workers of type exist", %{registry: registry} do
-  #     assert [] = Registry.list_by_type(registry, :nonexistent_type)
-  #   end
-  # end
+      Registry.register(registry, "worker2", worker2)
+      assert 2 = Registry.count(registry)
+    end
 
-  # describe "count/1" do
-  #   test "returns correct count of workers", %{registry: registry} do
-  #     assert 0 = Registry.count(registry)
+    test "decreases count after unregister", %{registry: registry} do
+      worker = %{name: "worker1", type: :openai}
+      Registry.register(registry, "worker1", worker)
+      assert 1 = Registry.count(registry)
 
-  #     worker1 = %{name: "worker1", type: :openai}
-  #     Registry.register(registry, "worker1", worker1)
-  #     assert 1 = Registry.count(registry)
+      Registry.unregister(registry, "worker1")
+      assert 0 = Registry.count(registry)
+    end
+  end
 
-  #     worker2 = %{name: "worker2", type: :anthropic}
-  #     Registry.register(registry, "worker2", worker2)
-  #     assert 2 = Registry.count(registry)
+  describe "list_by_type/2" do
+    # list_by_type calls worker.__struct__.info(worker) to get the type,
+    # so we need workers that are real structs with a proper info/1 function.
+    # We use the real pool_test-style test workers defined locally.
+    defmodule TypedWorker do
+      @moduledoc false
+      @behaviour CortexCore.Workers.Worker
+      defstruct [:name, :type]
+      def service_type, do: :search
+      def health_check(_), do: {:ok, :available}
+      def info(w), do: %{name: w.name, type: w.type}
+      def priority(_), do: 10
+    end
 
-  #     Registry.unregister(registry, "worker1")
-  #     assert 1 = Registry.count(registry)
-  #   end
-  # end
+    test "returns empty list when no workers of type", %{registry: registry} do
+      assert [] = Registry.list_by_type(registry, :openai)
+    end
+
+    test "returns only workers of the given type", %{registry: registry} do
+      w1 = %TypedWorker{name: "w1", type: :search}
+      w2 = %TypedWorker{name: "w2", type: :llm}
+
+      Registry.register(registry, "w1", w1)
+      Registry.register(registry, "w2", w2)
+
+      search_workers = Registry.list_by_type(registry, :search)
+      assert length(search_workers) == 1
+      assert w1 in search_workers
+
+      llm_workers = Registry.list_by_type(registry, :llm)
+      assert length(llm_workers) == 1
+      assert w2 in llm_workers
+    end
+
+    test "returns empty list for type with no registered workers", %{registry: registry} do
+      w1 = %TypedWorker{name: "w1", type: :search}
+      Registry.register(registry, "w1", w1)
+
+      assert [] = Registry.list_by_type(registry, :audio)
+    end
+  end
 end

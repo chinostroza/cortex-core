@@ -75,12 +75,12 @@ defmodule CortexCore.Workers.Adapters.TavilyWorker do
     ]
 
     case Req.post(
-      worker.base_url <> "/search",
-      json: test_payload,
-      headers: headers,
-      receive_timeout: 5_000,
-      retry: false
-    ) do
+           worker.base_url <> "/search",
+           json: test_payload,
+           headers: headers,
+           receive_timeout: 5_000,
+           retry: false
+         ) do
       {:ok, %{status: 200}} ->
         {:ok, :available}
 
@@ -125,7 +125,8 @@ defmodule CortexCore.Workers.Adapters.TavilyWorker do
   end
 
   @impl true
-  def priority(_worker), do: 20  # Prioridad media (después de local, antes de LLMs caros)
+  # Prioridad media (después de local, antes de LLMs caros)
+  def priority(_worker), do: 20
 
   # ============================================
   # Public API
@@ -150,11 +151,12 @@ defmodule CortexCore.Workers.Adapters.TavilyWorker do
       )
   """
   def new(opts) do
-    api_keys = case Keyword.get(opts, :api_keys) do
-      keys when is_list(keys) and keys != [] -> keys
-      single_key when is_binary(single_key) -> [single_key]
-      _ -> raise ArgumentError, "api_keys debe ser una lista no vacía o string"
-    end
+    api_keys =
+      case Keyword.get(opts, :api_keys) do
+        keys when is_list(keys) and keys != [] -> keys
+        single_key when is_binary(single_key) -> [single_key]
+        _ -> raise ArgumentError, "api_keys debe ser una lista no vacía o string"
+      end
 
     %__MODULE__{
       name: Keyword.fetch!(opts, :name),
@@ -192,12 +194,12 @@ defmodule CortexCore.Workers.Adapters.TavilyWorker do
     Logger.debug("Tavily search: query=#{query}, max_results=#{max_results}")
 
     case Req.post(
-      worker.base_url <> "/search",
-      json: payload,
-      headers: headers,
-      receive_timeout: worker.timeout,
-      retry: false
-    ) do
+           worker.base_url <> "/search",
+           json: payload,
+           headers: headers,
+           receive_timeout: worker.timeout,
+           retry: false
+         ) do
       {:ok, %{status: 200, body: body}} ->
         Logger.info("Tavily search successful: #{query}")
         {:ok, parse_response(body)}
@@ -258,9 +260,9 @@ defmodule CortexCore.Workers.Adapters.TavilyWorker do
   defp extract_error_message(body) when is_map(body) do
     # Tavily puede retornar error en diferentes formatos
     Map.get(body, "error") ||
-    Map.get(body, "detail") ||
-    Map.get(body, "message") ||
-    "Unknown error"
+      Map.get(body, "detail") ||
+      Map.get(body, "message") ||
+      "Unknown error"
   end
 
   defp extract_error_message(body) when is_binary(body), do: body

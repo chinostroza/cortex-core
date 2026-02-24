@@ -8,25 +8,28 @@ defmodule CortexCore.EmbeddingsIntegrationTest do
     def post(_url, opts) do
       input = opts[:json][:input]
 
-      embeddings = if is_list(input) do
-        Enum.map(input, fn _ -> Enum.map(1..1536, fn _ -> :rand.uniform() end) end)
-      else
-        [Enum.map(1..1536, fn _ -> :rand.uniform() end)]
-      end
+      embeddings =
+        if is_list(input) do
+          Enum.map(input, fn _ -> Enum.map(1..1536, fn _ -> :rand.uniform() end) end)
+        else
+          [Enum.map(1..1536, fn _ -> :rand.uniform() end)]
+        end
 
-      {:ok, %{
-        status: 200,
-        body: %{
-          "data" => Enum.with_index(embeddings, fn embedding, idx ->
-            %{"embedding" => embedding, "index" => idx}
-          end),
-          "model" => opts[:json][:model] || "text-embedding-3-small",
-          "usage" => %{
-            "prompt_tokens" => if(is_list(input), do: length(input) * 5, else: 5),
-            "total_tokens" => if(is_list(input), do: length(input) * 5, else: 5)
-          }
-        }
-      }}
+      {:ok,
+       %{
+         status: 200,
+         body: %{
+           "data" =>
+             Enum.with_index(embeddings, fn embedding, idx ->
+               %{"embedding" => embedding, "index" => idx}
+             end),
+           "model" => opts[:json][:model] || "text-embedding-3-small",
+           "usage" => %{
+             "prompt_tokens" => if(is_list(input), do: length(input) * 5, else: 5),
+             "total_tokens" => if(is_list(input), do: length(input) * 5, else: 5)
+           }
+         }
+       }}
     end
 
     def get(_url, _opts), do: {:ok, %{status: 200}}
@@ -48,10 +51,11 @@ defmodule CortexCore.EmbeddingsIntegrationTest do
       start_supervised!({CortexCore.Workers.Supervisor, health_check_interval: 0})
 
       # Manually add embeddings worker
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test-embeddings",
-        api_keys: ["sk-test-key"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test-embeddings",
+          api_keys: ["sk-test-key"]
+        )
 
       CortexCore.Workers.Registry.register(
         CortexCore.Workers.Registry,
@@ -78,10 +82,11 @@ defmodule CortexCore.EmbeddingsIntegrationTest do
     test "batch embedding via CortexCore.call/3" do
       start_supervised!({CortexCore.Workers.Supervisor, health_check_interval: 0})
 
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test-embeddings",
-        api_keys: ["sk-test-key"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test-embeddings",
+          api_keys: ["sk-test-key"]
+        )
 
       CortexCore.Workers.Registry.register(
         CortexCore.Workers.Registry,
@@ -100,20 +105,24 @@ defmodule CortexCore.EmbeddingsIntegrationTest do
 
       assert is_list(result.embeddings)
       assert length(result.embeddings) == 3
+
       assert Enum.all?(result.embeddings, fn embedding ->
-        is_list(embedding) and length(embedding) == 1536
-      end)
-      assert result.usage.prompt_tokens == 15  # 3 texts * 5 tokens each
+               is_list(embedding) and length(embedding) == 1536
+             end)
+
+      # 3 texts * 5 tokens each
+      assert result.usage.prompt_tokens == 15
     end
 
     test "embeddings with different models" do
       start_supervised!({CortexCore.Workers.Supervisor, health_check_interval: 0})
 
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test-embeddings",
-        api_keys: ["sk-test-key"],
-        default_model: "text-embedding-3-large"
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test-embeddings",
+          api_keys: ["sk-test-key"],
+          default_model: "text-embedding-3-large"
+        )
 
       CortexCore.Workers.Registry.register(
         CortexCore.Workers.Registry,
@@ -130,10 +139,11 @@ defmodule CortexCore.EmbeddingsIntegrationTest do
     test "health check integration" do
       start_supervised!({CortexCore.Workers.Supervisor, health_check_interval: 0})
 
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test-embeddings",
-        api_keys: ["sk-test-key"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test-embeddings",
+          api_keys: ["sk-test-key"]
+        )
 
       CortexCore.Workers.Registry.register(
         CortexCore.Workers.Registry,
@@ -149,10 +159,11 @@ defmodule CortexCore.EmbeddingsIntegrationTest do
     test "worker info returns complete metadata" do
       start_supervised!({CortexCore.Workers.Supervisor, health_check_interval: 0})
 
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test-embeddings",
-        api_keys: ["key1", "key2", "key3"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test-embeddings",
+          api_keys: ["key1", "key2", "key3"]
+        )
 
       info = OpenAIEmbeddingsWorker.info(worker)
 
@@ -162,11 +173,13 @@ defmodule CortexCore.EmbeddingsIntegrationTest do
       assert info.api_keys_count == 3
       assert info.default_model == "text-embedding-3-small"
       assert info.max_batch_size == 2048
+
       assert info.available_models == [
-        "text-embedding-3-small",
-        "text-embedding-3-large",
-        "text-embedding-ada-002"
-      ]
+               "text-embedding-3-small",
+               "text-embedding-3-large",
+               "text-embedding-ada-002"
+             ]
+
       assert is_map(info.pricing)
     end
   end
@@ -175,10 +188,11 @@ defmodule CortexCore.EmbeddingsIntegrationTest do
     test "CortexCore.call routes to embeddings workers" do
       start_supervised!({CortexCore.Workers.Supervisor, health_check_interval: 0})
 
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test-embeddings",
-        api_keys: ["sk-test-key"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test-embeddings",
+          api_keys: ["sk-test-key"]
+        )
 
       CortexCore.Workers.Registry.register(
         CortexCore.Workers.Registry,
@@ -196,16 +210,22 @@ defmodule CortexCore.EmbeddingsIntegrationTest do
       def post(_url, opts) do
         case opts[:json][:input] do
           "rate_limit" ->
-            {:ok, %{
-              status: 429,
-              body: %{"error" => %{"message" => "Rate limit reached for requests"}}
-            }}
+            {:ok,
+             %{
+               status: 429,
+               body: %{"error" => %{"message" => "Rate limit reached for requests"}}
+             }}
 
           "quota" ->
-            {:ok, %{
-              status: 429,
-              body: %{"error" => %{"message" => "You exceeded your current quota, please check your plan"}}
-            }}
+            {:ok,
+             %{
+               status: 429,
+               body: %{
+                 "error" => %{
+                   "message" => "You exceeded your current quota, please check your plan"
+                 }
+               }
+             }}
 
           "unauthorized" ->
             {:ok, %{status: 401, body: %{"error" => %{"message" => "Invalid API key"}}}}
@@ -219,66 +239,75 @@ defmodule CortexCore.EmbeddingsIntegrationTest do
     end
 
     test "handles rate limit errors" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test",
-        api_keys: ["sk-test"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test",
+          api_keys: ["sk-test"]
+        )
 
-      {:error, :rate_limited} = OpenAIEmbeddingsWorker.call(
-        worker,
-        %{input: "rate_limit"},
-        [],
-        MockErrorClient
-      )
+      {:error, :rate_limited} =
+        OpenAIEmbeddingsWorker.call(
+          worker,
+          %{input: "rate_limit"},
+          [],
+          MockErrorClient
+        )
     end
 
     test "handles quota exceeded errors" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test",
-        api_keys: ["sk-test"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test",
+          api_keys: ["sk-test"]
+        )
 
-      {:error, :quota_exceeded} = OpenAIEmbeddingsWorker.call(
-        worker,
-        %{input: "quota"},
-        [],
-        MockErrorClient
-      )
+      {:error, :quota_exceeded} =
+        OpenAIEmbeddingsWorker.call(
+          worker,
+          %{input: "quota"},
+          [],
+          MockErrorClient
+        )
     end
 
     test "handles unauthorized errors" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test",
-        api_keys: ["sk-test"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test",
+          api_keys: ["sk-test"]
+        )
 
-      {:error, :unauthorized} = OpenAIEmbeddingsWorker.call(
-        worker,
-        %{input: "unauthorized"},
-        [],
-        MockErrorClient
-      )
+      {:error, :unauthorized} =
+        OpenAIEmbeddingsWorker.call(
+          worker,
+          %{input: "unauthorized"},
+          [],
+          MockErrorClient
+        )
     end
 
     test "health check reports unavailable on errors" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test",
-        api_keys: ["sk-test"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test",
+          api_keys: ["sk-test"]
+        )
 
-      {:ok, :unavailable} = OpenAIEmbeddingsWorker.health_check(
-        worker,
-        MockErrorClient
-      )
+      {:ok, :unavailable} =
+        OpenAIEmbeddingsWorker.health_check(
+          worker,
+          MockErrorClient
+        )
     end
   end
 
   describe "API key rotation integration" do
     test "rotates through multiple API keys" do
-      worker = OpenAIEmbeddingsWorker.new(
-        name: "test",
-        api_keys: ["key1", "key2", "key3"]
-      )
+      worker =
+        OpenAIEmbeddingsWorker.new(
+          name: "test",
+          api_keys: ["key1", "key2", "key3"]
+        )
 
       assert OpenAIEmbeddingsWorker.current_api_key(worker) == "key1"
 

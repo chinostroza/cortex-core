@@ -10,6 +10,8 @@ defmodule CortexCore.Dispatcher do
 
   require Logger
 
+  alias CortexCore.Workers.{Pool, Registry}
+
   @doc """
   Despacha una operación genérica a un worker del tipo especificado.
 
@@ -35,7 +37,7 @@ defmodule CortexCore.Dispatcher do
       dispatch(:llm, %{messages: messages}, [model: "gpt-4"])
   """
   def dispatch(service_type, params, opts \\ []) do
-    case CortexCore.Workers.Pool.call(CortexCore.Workers.Pool, service_type, params, opts) do
+    case Pool.call(Pool, service_type, params, opts) do
       {:ok, result} ->
         Logger.info("Operación #{service_type} despachada exitosamente")
         {:ok, result}
@@ -75,7 +77,7 @@ defmodule CortexCore.Dispatcher do
     - `{:error, reason}` si no hay workers disponibles
   """
   def dispatch_stream(messages, opts \\ []) do
-    case CortexCore.Workers.Pool.stream_completion(CortexCore.Workers.Pool, messages, opts) do
+    case Pool.stream_completion(Pool, messages, opts) do
       {:ok, stream} ->
         Logger.info("Stream despachado exitosamente")
         {:ok, stream}
@@ -112,9 +114,9 @@ defmodule CortexCore.Dispatcher do
         {:error, :no_provider_specified}
 
       name ->
-        case CortexCore.Workers.Registry.get(CortexCore.Workers.Registry, name) do
+        case Registry.get(Registry, name) do
           {:ok, worker} ->
-            apply(worker.__struct__, :call_with_tools, [worker, messages, tools, opts])
+            worker.__struct__.call_with_tools(worker, messages, tools, opts)
 
           {:error, :not_found} ->
             {:error, {:provider_not_found, name}}
@@ -126,13 +128,13 @@ defmodule CortexCore.Dispatcher do
   Obtiene el estado de salud de todos los workers.
   """
   def health_status do
-    CortexCore.Workers.Pool.health_status()
+    Pool.health_status()
   end
 
   @doc """
   Fuerza un health check de todos los workers.
   """
   def check_workers do
-    CortexCore.Workers.Pool.check_health()
+    Pool.check_health()
   end
 end

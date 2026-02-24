@@ -34,15 +34,16 @@ defmodule CortexCore.Workers.Adapters.DuckDuckGoWorkerTest do
 
     test "parses binary JSON body with abstract text" do
       # DuckDuckGo response as raw JSON string (what Req returns when CT is not application/json)
-      raw = Jason.encode!(%{
-        "AbstractText" => "Elixir is a dynamic, functional language.",
-        "AbstractSource" => "Wikipedia",
-        "AbstractURL" => "https://en.wikipedia.org/wiki/Elixir_(programming_language)",
-        "RelatedTopics" => [],
-        "Heading" => "Elixir",
-        "AnswerType" => "",
-        "Image" => ""
-      })
+      raw =
+        Jason.encode!(%{
+          "AbstractText" => "Elixir is a dynamic, functional language.",
+          "AbstractSource" => "Wikipedia",
+          "AbstractURL" => "https://en.wikipedia.org/wiki/Elixir_(programming_language)",
+          "RelatedTopics" => [],
+          "Heading" => "Elixir",
+          "AnswerType" => "",
+          "Image" => ""
+        })
 
       # Use Bypass to simulate a real HTTP response with wrong Content-Type.
       # Instead, we test the public call/3 function via a bypass.
@@ -57,11 +58,12 @@ defmodule CortexCore.Workers.Adapters.DuckDuckGoWorkerTest do
     end
 
     test "binary body with empty response returns empty results" do
-      raw = Jason.encode!(%{
-        "AbstractText" => "",
-        "RelatedTopics" => [],
-        "Heading" => ""
-      })
+      raw =
+        Jason.encode!(%{
+          "AbstractText" => "",
+          "RelatedTopics" => [],
+          "Heading" => ""
+        })
 
       {:ok, parsed} = Jason.decode(raw)
       assert parsed["AbstractText"] == ""

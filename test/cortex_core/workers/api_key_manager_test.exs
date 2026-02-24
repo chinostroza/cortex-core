@@ -23,18 +23,19 @@ defmodule CortexCore.Workers.APIKeyManagerTest do
 
         {:ok, rotated2} = APIKeyManager.get_next_key(manager, rotated1)
         assert rotated2.current_key_index in 0..2
-        
+
         # Should have rotated to next key
         assert rotated2.current_key_index != rotated1.current_key_index ||
-               length(worker.api_keys) == 1
+                 length(worker.api_keys) == 1
       end)
     end
 
     test "returns error when no keys available", %{manager: manager} do
       worker = %{api_keys: [], current_key_index: 0}
-      
+
       # Mock to return error for empty keys
-      with_mock APIKeyManager, get_next_key: fn _manager, _worker -> {:error, :no_available_keys} end do
+      with_mock APIKeyManager,
+        get_next_key: fn _manager, _worker -> {:error, :no_available_keys} end do
         assert {:error, :no_available_keys} = APIKeyManager.get_next_key(manager, worker)
       end
     end
@@ -48,7 +49,7 @@ defmodule CortexCore.Workers.APIKeyManagerTest do
       with_mocked_api_key_manager(fn ->
         # Block first key
         APIKeyManager.report_rate_limit(manager, worker)
-        
+
         {:ok, rotated} = APIKeyManager.get_next_key(manager, worker)
         # Should not use the blocked key (index 0)
         assert rotated.current_key_index != 0
@@ -64,10 +65,9 @@ defmodule CortexCore.Workers.APIKeyManagerTest do
         api_keys: ["key1", "key2"],
         current_key_index: 0
       }
-      
-      with_mock CortexCore.Workers.Registry, [:passthrough], [
-        get: fn "test_worker" -> {:ok, test_worker} end
-      ] do
+
+      with_mock CortexCore.Workers.Registry, [:passthrough],
+        get: fn "test_worker" -> {:ok, test_worker} end do
         worker = %{
           api_keys: ["key1", "key2"],
           current_key_index: 0
@@ -75,7 +75,8 @@ defmodule CortexCore.Workers.APIKeyManagerTest do
 
         # Report rate limit
         APIKeyManager.report_rate_limit(manager, worker)
-        Process.sleep(50) # Give time to process
+        # Give time to process
+        Process.sleep(50)
 
         # Get stats to verify
         with_mocked_api_key_manager(fn ->
@@ -96,10 +97,9 @@ defmodule CortexCore.Workers.APIKeyManagerTest do
         api_keys: ["key1"],
         current_key_index: 0
       }
-      
-      with_mock CortexCore.Workers.Registry, [:passthrough], [
-        get: fn "test_worker" -> {:ok, test_worker} end
-      ] do
+
+      with_mock CortexCore.Workers.Registry, [:passthrough],
+        get: fn "test_worker" -> {:ok, test_worker} end do
         worker = %{
           api_keys: ["key1"],
           current_key_index: 0
@@ -144,7 +144,7 @@ defmodule CortexCore.Workers.APIKeyManagerTest do
 
         # Get next key - should prefer unused keys
         {:ok, rotated} = APIKeyManager.get_next_key(manager, worker)
-        
+
         # With least_used strategy, it should prefer a different key or stay within valid bounds
         assert rotated.current_key_index in 0..(length(worker.api_keys) - 1)
       end)
@@ -158,10 +158,11 @@ defmodule CortexCore.Workers.APIKeyManagerTest do
 
       with_mocked_api_key_manager(fn ->
         # Get multiple keys and verify they're not always the same
-        results = for _ <- 1..10 do
-          {:ok, rotated} = APIKeyManager.get_next_key(manager, worker)
-          rotated.current_key_index
-        end
+        results =
+          for _ <- 1..10 do
+            {:ok, rotated} = APIKeyManager.get_next_key(manager, worker)
+            rotated.current_key_index
+          end
 
         # Should have some variation (not all the same)
         assert length(Enum.uniq(results)) > 1

@@ -134,16 +134,12 @@ defmodule CortexCore.Workers.Worker do
     cond do
       # Prioridad 1: Si tiene call/3 implementado, usarlo
       function_exported?(worker_module, :call, 3) ->
-        apply(worker_module, :call, [worker, params, opts])
+        worker_module.call(worker, params, opts)
 
       # Prioridad 2: Backward compatibility para LLMs con stream_completion
       function_exported?(worker_module, :stream_completion, 3) and
-      Map.has_key?(params, :messages) ->
-        apply(worker_module, :stream_completion, [
-          worker,
-          params.messages,
-          opts
-        ])
+          Map.has_key?(params, :messages) ->
+        worker_module.stream_completion(worker, params.messages, opts)
 
       # No implementa ninguna operación
       true ->

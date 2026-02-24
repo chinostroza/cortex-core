@@ -94,7 +94,8 @@ defmodule CortexCore.Workers.Adapters.DuckDuckGoWorker do
       name: worker.name,
       type: :search,
       service: :duckduckgo,
-      api_keys_count: 0,  # No requiere API key
+      # No requiere API key
+      api_keys_count: 0,
       base_url: worker.base_url,
       timeout: worker.timeout,
       capabilities: [
@@ -114,7 +115,8 @@ defmodule CortexCore.Workers.Adapters.DuckDuckGoWorker do
   end
 
   @impl true
-  def priority(_worker), do: 30  # Prioridad baja (fallback gratuito)
+  # Prioridad baja (fallback gratuito)
+  def priority(_worker), do: 30
 
   # ============================================
   # Public API
@@ -206,16 +208,20 @@ defmodule CortexCore.Workers.Adapters.DuckDuckGoWorker do
     results = extract_results(related_topics, max_results)
 
     # Agregar abstract como primer resultado si existe
-    results = if abstract_text != "" do
-      [%{
-        "title" => abstract_source || "Instant Answer",
-        "url" => abstract_url,
-        "snippet" => abstract_text,
-        "type" => "instant_answer"
-      } | results]
-    else
-      results
-    end
+    results =
+      if abstract_text != "" do
+        [
+          %{
+            "title" => abstract_source || "Instant Answer",
+            "url" => abstract_url,
+            "snippet" => abstract_text,
+            "type" => "instant_answer"
+          }
+          | results
+        ]
+      else
+        results
+      end
 
     %{
       results: Enum.take(results, max_results),
@@ -260,10 +266,11 @@ defmodule CortexCore.Workers.Adapters.DuckDuckGoWorker do
 
   defp parse_topic(%{"Text" => text, "FirstURL" => url} = topic) do
     # Extraer título del texto (antes del primer " - ")
-    title = case String.split(text, " - ", parts: 2) do
-      [t, _] -> t
-      _ -> String.slice(text, 0, 100)
-    end
+    title =
+      case String.split(text, " - ", parts: 2) do
+        [t, _] -> t
+        _ -> String.slice(text, 0, 100)
+      end
 
     %{
       "title" => title,
@@ -278,8 +285,8 @@ defmodule CortexCore.Workers.Adapters.DuckDuckGoWorker do
 
   defp extract_error_message(body) when is_map(body) do
     Map.get(body, "message") ||
-    Map.get(body, "error") ||
-    "Unknown error"
+      Map.get(body, "error") ||
+      "Unknown error"
   end
 
   defp extract_error_message(body) when is_binary(body) do

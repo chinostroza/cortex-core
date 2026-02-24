@@ -1,0 +1,21 @@
+{
+  "coverage_options": {
+    "minimum_coverage": 80,
+    "treat_no_relevant_lines_as_covered": true
+  },
+  "skip_files": [
+    "lib/cortex_core/behaviour.ex",
+    "lib/cortex_core/workers/adapters/api_worker_base.ex",
+    "lib/cortex_core/workers/adapters/brave_worker.ex",
+    "lib/cortex_core/workers/adapters/cohere_worker.ex",
+    "lib/cortex_core/workers/adapters/duckduckgo_worker.ex",
+    "lib/cortex_core/workers/adapters/gemini_worker.ex",
+    "lib/cortex_core/workers/adapters/groq_worker.ex",
+    "lib/cortex_core/workers/adapters/ollama_worker.ex",
+    "lib/cortex_core/workers/adapters/pubmed_worker.ex",
+    "lib/cortex_core/workers/adapters/serper_worker.ex",
+    "lib/cortex_core/workers/adapters/tavily_worker.ex",
+    "lib/cortex_core/workers/adapters/xai_worker.ex",
+    "lib/cortex_core/workers/api_key_manager.ex"
+  ]
+}

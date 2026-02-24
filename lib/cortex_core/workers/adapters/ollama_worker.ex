@@ -1,11 +1,11 @@
 defmodule CortexCore.Workers.Adapters.OllamaWorker do
   @moduledoc """
   Worker adapter para servidores Ollama.
-  
+
   Este módulo se encarga exclusivamente de la comunicación con una instancia
   específica de Ollama, implementando el behaviour Worker.
   """
-  
+
   @behaviour CortexCore.Workers.Worker
 
   # ============================================
@@ -16,12 +16,12 @@ defmodule CortexCore.Workers.Adapters.OllamaWorker do
   def service_type, do: :llm
 
   defstruct [:name, :base_url, :models, :timeout]
-  
+
   @default_timeout 60_000
-  
+
   @doc """
   Crea una nueva instancia de OllamaWorker.
-  
+
   Options:
     - :name - Nombre identificador del worker
     - :base_url - URL base del servidor Ollama (ej: "http://localhost:11434")
@@ -36,37 +36,39 @@ defmodule CortexCore.Workers.Adapters.OllamaWorker do
       timeout: Keyword.get(opts, :timeout, @default_timeout)
     }
   end
-  
+
   @impl true
   def health_check(%__MODULE__{base_url: base_url, timeout: timeout}) do
     case Req.get(base_url <> "/api/tags", receive_timeout: timeout, retry: false) do
       {:ok, %{status: 200}} ->
         {:ok, :available}
+
       {:ok, %{status: status}} ->
         {:error, {:http_error, status}}
+
       {:error, reason} ->
         {:error, reason}
     end
   end
-  
+
   @impl true
   def stream_completion(%__MODULE__{} = worker, messages, opts) do
     model = Keyword.get(opts, :model, "gemma3:4b")
-    
+
     payload = %{
       model: model,
       messages: messages,
       stream: true
     }
-    
+
     request = build_request(worker, payload)
-    
+
     stream = create_stream(request, worker.timeout)
     {:ok, stream}
   rescue
     error -> {:error, error}
   end
-  
+
   @impl true
   def info(%__MODULE__{} = worker) do
     %{
@@ -77,12 +79,13 @@ defmodule CortexCore.Workers.Adapters.OllamaWorker do
       timeout: worker.timeout
     }
   end
-  
+
   @impl true
-  def priority(%__MODULE__{}), do: 50  # Baja prioridad - usar como fallback después de APIs
-  
+  # Baja prioridad - usar como fallback después de APIs
+  def priority(%__MODULE__{}), do: 50
+
   # Funciones privadas
-  
+
   defp build_request(worker, payload) do
     Finch.build(
       :post,
@@ -91,30 +94,15 @@ defmodule CortexCore.Workers.Adapters.OllamaWorker do
       Jason.encode!(payload)
     )
   end
-  
+
   defp create_stream(request, timeout) do
     Stream.unfold(:init, fn
       :init ->
         parent = self()
         ref = make_ref()
-        
-        spawn(fn ->
-          Finch.stream(request, Req.Finch, "", fn
-            {:status, _status}, acc -> acc
-            {:headers, _headers}, acc -> acc
-            {:data, data}, acc ->
-              data
-              |> String.split("\n", trim: true)
-              |> Enum.each(fn line ->
-                send(parent, {ref, {:chunk, line}})
-              end)
-              acc
-          end)
-          send(parent, {ref, :done})
-        end)
-        
+        spawn(fn -> run_ollama_stream(request, parent, ref) end)
         {nil, {ref, :streaming}}
-        
+
       {ref, :streaming} = state ->
         receive do
           {^ref, :done} -> nil
@@ -122,10 +110,26 @@ defmodule CortexCore.Workers.Adapters.OllamaWorker do
         after
           timeout -> nil
         end
-        
+
       _ ->
         nil
     end)
     |> Stream.reject(&is_nil/1)
+  end
+
+  defp run_ollama_stream(request, parent, ref) do
+    Finch.stream(request, Req.Finch, "", fn
+      {:status, _status}, acc -> acc
+      {:headers, _headers}, acc -> acc
+
+      {:data, data}, acc ->
+        data
+        |> String.split("\n", trim: true)
+        |> Enum.each(fn line -> send(parent, {ref, {:chunk, line}}) end)
+
+        acc
+    end)
+
+    send(parent, {ref, :done})
   end
 end

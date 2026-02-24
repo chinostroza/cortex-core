@@ -51,7 +51,9 @@ defmodule CortexCore.Workers.Adapters.GroqWorkerTest do
       }
 
       result = GroqWorker.extract_tool_calls(body)
-      assert [%{name: "extract", arguments: %{"name" => "UserAuth", "priority" => "high"}}] = result
+
+      assert [%{name: "extract", arguments: %{"name" => "UserAuth", "priority" => "high"}}] =
+               result
     end
 
     test "returns empty list when no tool_calls key" do
@@ -117,7 +119,13 @@ defmodule CortexCore.Workers.Adapters.GroqWorkerTest do
       assert worker.default_model == "llama-3.1-8b-instant"
       # The @default_tools_model is a module attribute; we verify via the function behavior
       # by checking that transform_tools + extract_tool_calls roundtrip works
-      tools = [%{"type" => "function", "function" => %{"name" => "f", "description" => "d", "parameters" => %{}}}]
+      tools = [
+        %{
+          "type" => "function",
+          "function" => %{"name" => "f", "description" => "d", "parameters" => %{}}
+        }
+      ]
+
       assert %{"tools" => _} = GroqWorker.transform_tools(tools)
     end
   end

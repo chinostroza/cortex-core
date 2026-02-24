@@ -126,7 +126,8 @@ defmodule CortexCore.Workers.Adapters.BraveWorker do
   end
 
   @impl true
-  def priority(_worker), do: 15  # Alta prioridad (mismo que usa Anthropic)
+  # Alta prioridad (mismo que usa Anthropic)
+  def priority(_worker), do: 15
 
   # ============================================
   # Public API
@@ -151,11 +152,12 @@ defmodule CortexCore.Workers.Adapters.BraveWorker do
       )
   """
   def new(opts) do
-    api_keys = case Keyword.get(opts, :api_keys) do
-      keys when is_list(keys) and keys != [] -> keys
-      single_key when is_binary(single_key) -> [single_key]
-      _ -> raise ArgumentError, "api_keys debe ser una lista no vacía o string"
-    end
+    api_keys =
+      case Keyword.get(opts, :api_keys) do
+        keys when is_list(keys) and keys != [] -> keys
+        single_key when is_binary(single_key) -> [single_key]
+        _ -> raise ArgumentError, "api_keys debe ser una lista no vacía o string"
+      end
 
     %__MODULE__{
       name: Keyword.fetch!(opts, :name),
@@ -180,13 +182,14 @@ defmodule CortexCore.Workers.Adapters.BraveWorker do
       {"X-Subscription-Token", api_key}
     ]
 
-    url = build_url(query,
-      count: count,
-      search_lang: search_lang,
-      country: country,
-      safesearch: safesearch,
-      freshness: freshness
-    )
+    url =
+      build_url(query,
+        count: count,
+        search_lang: search_lang,
+        country: country,
+        safesearch: safesearch,
+        freshness: freshness
+      )
 
     Logger.debug("Brave search: query=#{query}, count=#{count}")
 
@@ -234,7 +237,10 @@ defmodule CortexCore.Workers.Adapters.BraveWorker do
     params = [{"q", query}]
 
     params = if opts[:count], do: [{"count", opts[:count]} | params], else: params
-    params = if opts[:search_lang], do: [{"search_lang", opts[:search_lang]} | params], else: params
+
+    params =
+      if opts[:search_lang], do: [{"search_lang", opts[:search_lang]} | params], else: params
+
     params = if opts[:country], do: [{"country", opts[:country]} | params], else: params
     params = if opts[:safesearch], do: [{"safesearch", opts[:safesearch]} | params], else: params
     params = if opts[:freshness], do: [{"freshness", opts[:freshness]} | params], else: params
@@ -253,15 +259,16 @@ defmodule CortexCore.Workers.Adapters.BraveWorker do
     results = Map.get(web_results, "results", [])
 
     %{
-      results: Enum.map(results, fn result ->
-        %{
-          "title" => Map.get(result, "title"),
-          "url" => Map.get(result, "url"),
-          "snippet" => Map.get(result, "description"),
-          "age" => Map.get(result, "age"),
-          "language" => Map.get(result, "language")
-        }
-      end),
+      results:
+        Enum.map(results, fn result ->
+          %{
+            "title" => Map.get(result, "title"),
+            "url" => Map.get(result, "url"),
+            "snippet" => Map.get(result, "description"),
+            "age" => Map.get(result, "age"),
+            "language" => Map.get(result, "language")
+          }
+        end),
       query: Map.get(body, "query", %{}) |> Map.get("original"),
       total_results: get_in(web_results, ["results_count"]),
       news: Map.get(body, "news", %{}) |> Map.get("results", []),
@@ -273,9 +280,9 @@ defmodule CortexCore.Workers.Adapters.BraveWorker do
 
   defp extract_error_message(body) when is_map(body) do
     Map.get(body, "message") ||
-    Map.get(body, "error") ||
-    Map.get(body, "detail") ||
-    "Unknown error"
+      Map.get(body, "error") ||
+      Map.get(body, "detail") ||
+      "Unknown error"
   end
 
   defp extract_error_message(body) when is_binary(body), do: body

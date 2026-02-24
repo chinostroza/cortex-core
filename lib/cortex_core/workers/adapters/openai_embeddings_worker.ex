@@ -88,11 +88,12 @@ defmodule CortexCore.Workers.Adapters.OpenAIEmbeddingsWorker do
       )
   """
   def new(opts) do
-    api_keys = case Keyword.get(opts, :api_keys) do
-      keys when is_list(keys) and keys != [] -> keys
-      single_key when is_binary(single_key) -> [single_key]
-      _ -> raise ArgumentError, "api_keys debe ser una lista no vacía o string"
-    end
+    api_keys =
+      case Keyword.get(opts, :api_keys) do
+        keys when is_list(keys) and keys != [] -> keys
+        single_key when is_binary(single_key) -> [single_key]
+        _ -> raise ArgumentError, "api_keys debe ser una lista no vacía o string"
+      end
 
     %__MODULE__{
       name: Keyword.fetch!(opts, :name),
@@ -173,10 +174,7 @@ defmodule CortexCore.Workers.Adapters.OpenAIEmbeddingsWorker do
   def rotate_api_key(worker) do
     new_index = rem(worker.current_key_index + 1, length(worker.api_keys))
 
-    %{worker |
-      current_key_index: new_index,
-      last_rotation: DateTime.utc_now()
-    }
+    %{worker | current_key_index: new_index, last_rotation: DateTime.utc_now()}
   end
 
   @doc """
@@ -192,59 +190,58 @@ defmodule CortexCore.Workers.Adapters.OpenAIEmbeddingsWorker do
 
   defp execute_embedding(worker, input, params, opts, http_client) do
     model = Keyword.get(opts, :model) || Map.get(params, :model) || worker.default_model
+    payload = build_embedding_payload(input, model, params)
+    url = worker.base_url <> @embeddings_endpoint
+    headers = build_headers(worker)
 
-    # Build request payload
-    payload = %{
-      input: input,
-      model: model,
-      encoding_format: "float"
-    }
+    http_client.post(url, json: payload, headers: headers, receive_timeout: worker.timeout)
+    |> handle_embedding_response(model, input)
+  end
 
-    # Add optional dimensions parameter (only for 3-small and 3-large)
-    payload = if Map.has_key?(params, :dimensions) and model in ["text-embedding-3-small", "text-embedding-3-large"] do
+  defp build_embedding_payload(input, model, params) do
+    payload = %{input: input, model: model, encoding_format: "float"}
+
+    if Map.has_key?(params, :dimensions) and
+         model in ["text-embedding-3-small", "text-embedding-3-large"] do
       Map.put(payload, :dimensions, params.dimensions)
     else
       payload
     end
+  end
 
-    url = worker.base_url <> @embeddings_endpoint
-    headers = build_headers(worker)
+  defp handle_embedding_response({:ok, %{status: status, body: body}}, model, input)
+       when status in 200..299 do
+    parse_success_response(body, model, input)
+  end
 
-    case http_client.post(url,
-      json: payload,
-      headers: headers,
-      receive_timeout: worker.timeout
-    ) do
-      {:ok, %{status: status, body: body}} when status in 200..299 ->
-        parse_success_response(body, model, input)
+  defp handle_embedding_response({:ok, %{status: 401}}, _model, _input) do
+    {:error, :unauthorized}
+  end
 
-      {:ok, %{status: 401}} ->
-        {:error, :unauthorized}
+  defp handle_embedding_response({:ok, %{status: 429, body: body}}, _model, _input) do
+    if quota_exceeded?(body), do: {:error, :quota_exceeded}, else: {:error, :rate_limited}
+  end
 
-      {:ok, %{status: 429, body: body}} ->
-        if quota_exceeded?(body) do
-          {:error, :quota_exceeded}
-        else
-          {:error, :rate_limited}
-        end
+  defp handle_embedding_response({:ok, %{status: 400, body: body}}, _model, _input) do
+    error_msg = extract_error_message(body)
 
-      {:ok, %{status: 400, body: body}} ->
-        error_msg = extract_error_message(body)
-        if String.contains?(String.downcase(error_msg), "too long") do
-          {:error, :input_too_long}
-        else
-          {:error, {:bad_request, error_msg}}
-        end
-
-      {:ok, %{status: status, body: body}} ->
-        {:error, {:http_error, status, extract_error_message(body)}}
-
-      {:error, %{reason: :timeout}} ->
-        {:error, :timeout}
-
-      {:error, reason} ->
-        {:error, reason}
+    if String.contains?(String.downcase(error_msg), "too long") do
+      {:error, :input_too_long}
+    else
+      {:error, {:bad_request, error_msg}}
     end
+  end
+
+  defp handle_embedding_response({:ok, %{status: status, body: body}}, _model, _input) do
+    {:error, {:http_error, status, extract_error_message(body)}}
+  end
+
+  defp handle_embedding_response({:error, %{reason: :timeout}}, _model, _input) do
+    {:error, :timeout}
+  end
+
+  defp handle_embedding_response({:error, reason}, _model, _input) do
+    {:error, reason}
   end
 
   defp parse_success_response(body, model, input) do
@@ -252,31 +249,32 @@ defmodule CortexCore.Workers.Adapters.OpenAIEmbeddingsWorker do
       %{"data" => data, "usage" => usage} when is_list(data) ->
         embeddings = Enum.map(data, fn item -> item["embedding"] end)
 
-        result = if is_list(input) do
-          # Batch response
-          %{
-            embeddings: embeddings,
-            model: model,
-            dimensions: get_dimensions(model, List.first(embeddings)),
-            usage: %{
-              prompt_tokens: usage["prompt_tokens"],
-              total_tokens: usage["total_tokens"]
-            },
-            cost_usd: calculate_cost(model, usage["total_tokens"])
-          }
-        else
-          # Single response
-          %{
-            embedding: List.first(embeddings),
-            model: model,
-            dimensions: get_dimensions(model, List.first(embeddings)),
-            usage: %{
-              prompt_tokens: usage["prompt_tokens"],
-              total_tokens: usage["total_tokens"]
-            },
-            cost_usd: calculate_cost(model, usage["total_tokens"])
-          }
-        end
+        result =
+          if is_list(input) do
+            # Batch response
+            %{
+              embeddings: embeddings,
+              model: model,
+              dimensions: get_dimensions(model, List.first(embeddings)),
+              usage: %{
+                prompt_tokens: usage["prompt_tokens"],
+                total_tokens: usage["total_tokens"]
+              },
+              cost_usd: calculate_cost(model, usage["total_tokens"])
+            }
+          else
+            # Single response
+            %{
+              embedding: List.first(embeddings),
+              model: model,
+              dimensions: get_dimensions(model, List.first(embeddings)),
+              usage: %{
+                prompt_tokens: usage["prompt_tokens"],
+                total_tokens: usage["total_tokens"]
+              },
+              cost_usd: calculate_cost(model, usage["total_tokens"])
+            }
+          end
 
         {:ok, result}
 
@@ -290,6 +288,7 @@ defmodule CortexCore.Workers.Adapters.OpenAIEmbeddingsWorker do
 
   defp build_headers(worker) do
     api_key = current_api_key(worker)
+
     [
       {"Authorization", "Bearer #{api_key}"},
       {"Content-Type", "application/json"}
@@ -305,6 +304,7 @@ defmodule CortexCore.Workers.Adapters.OpenAIEmbeddingsWorker do
     ]
 
     body_lower = String.downcase(body)
+
     Enum.any?(quota_patterns, fn pattern ->
       String.contains?(body_lower, pattern)
     end)

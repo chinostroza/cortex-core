@@ -90,18 +90,18 @@ defmodule CortexCore.MixProject do
         "guides/api_reference.md"
       ],
       groups_for_modules: [
-        "Core": [
+        Core: [
           CortexCore,
           CortexCore.Dispatcher
         ],
-        "Workers": [
+        Workers: [
           CortexCore.Workers.Worker,
           CortexCore.Workers.Registry,
           CortexCore.Workers.Pool,
           CortexCore.Workers.Supervisor,
           CortexCore.Workers.APIKeyManager
         ],
-        "Adapters": [
+        Adapters: [
           CortexCore.Workers.Adapters.APIWorkerBase,
           CortexCore.Workers.Adapters.OllamaWorker,
           CortexCore.Workers.Adapters.OpenAIWorker,

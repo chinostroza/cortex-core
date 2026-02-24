@@ -11,22 +11,22 @@ defmodule CortexCore.Workers.Supervisor do
   use Supervisor
   require Logger
 
-  alias CortexCore.Workers.{Registry, Pool}
+  alias CortexCore.Workers.{Pool, Registry}
 
   alias CortexCore.Workers.Adapters.{
-    OllamaWorker,
-    GroqWorker,
-    GeminiWorker,
-    CohereWorker,
-    OpenAIWorker,
-    OpenAIEmbeddingsWorker,
     AnthropicWorker,
-    XAIWorker,
-    TavilyWorker,
-    SerperWorker,
     BraveWorker,
+    CohereWorker,
     DuckDuckGoWorker,
-    PubMedWorker
+    GeminiWorker,
+    GroqWorker,
+    OllamaWorker,
+    OpenAIEmbeddingsWorker,
+    OpenAIWorker,
+    PubMedWorker,
+    SerperWorker,
+    TavilyWorker,
+    XAIWorker
   }
 
   def start_link(opts \\ []) do
@@ -36,11 +36,28 @@ defmodule CortexCore.Workers.Supervisor do
 
   @impl true
   def init(opts) do
-    # Configuración por defecto
     registry_name = Keyword.get(opts, :registry_name, CortexCore.Workers.Registry)
     pool_name = Keyword.get(opts, :pool_name, CortexCore.Workers.Pool)
+    strategy = get_pool_strategy()
+    health_check_interval = get_health_check_interval()
 
-    # Leer estrategia desde environment variable
+    children = [
+      {Registry, [name: registry_name]},
+      {Pool,
+       [
+         name: pool_name,
+         registry: registry_name,
+         strategy: strategy,
+         check_interval: health_check_interval
+       ]},
+      {Task.Supervisor, name: CortexCore.Workers.TaskSupervisor}
+    ]
+
+    opts = [strategy: :one_for_one, name: __MODULE__]
+    Supervisor.init(children, opts)
+  end
+
+  defp get_pool_strategy do
     env_strategy = System.get_env("WORKER_POOL_STRATEGY", "local_first")
 
     strategy =
@@ -52,47 +69,22 @@ defmodule CortexCore.Workers.Supervisor do
       end
 
     Logger.info("Pool strategy configurada: #{inspect(strategy)} (desde env: #{env_strategy})")
+    strategy
+  end
 
-    # Leer intervalo de health check desde environment
-    health_check_interval =
-      case System.get_env("HEALTH_CHECK_INTERVAL") do
-        # 30 segundos por defecto
-        nil ->
-          30_000
+  defp get_health_check_interval do
+    case System.get_env("HEALTH_CHECK_INTERVAL") do
+      nil -> 30_000
+      "0" -> :disabled
+      interval_str -> parse_interval(interval_str)
+    end
+  end
 
-        # Deshabilitar health checks
-        "0" ->
-          :disabled
-
-        interval_str ->
-          case Integer.parse(interval_str) do
-            # Convertir a milliseconds
-            {seconds, ""} -> seconds * 1000
-            _ -> 30_000
-          end
-      end
-
-    children = [
-      # Registry debe iniciarse primero
-      {Registry, [name: registry_name]},
-
-      # Pool depende del Registry
-      {Pool,
-       [
-         name: pool_name,
-         registry: registry_name,
-         strategy: strategy,
-         check_interval: health_check_interval
-       ]},
-
-      # Task SUPERVISOR para configurar workers de forma asíncrona
-      {Task.Supervisor, name: CortexCore.Workers.TaskSupervisor}
-    ]
-
-    # El Pool se encargará de configurar workers cuando esté listo
-
-    opts = [strategy: :one_for_one, name: __MODULE__]
-    Supervisor.init(children, opts)
+  defp parse_interval(interval_str) do
+    case Integer.parse(interval_str) do
+      {seconds, ""} -> seconds * 1000
+      _ -> 30_000
+    end
   end
 
   @doc """
@@ -101,67 +93,55 @@ defmodule CortexCore.Workers.Supervisor do
   def add_worker(supervisor \\ __MODULE__, name, worker_opts) do
     registry_name = get_registry_name(supervisor)
 
-    case worker_opts[:type] do
-      :openai ->
-        worker = OpenAIWorker.new(Keyword.put(worker_opts, :name, name))
-        Registry.register(registry_name, name, worker)
-
-      :openai_embeddings ->
-        worker = OpenAIEmbeddingsWorker.new(Keyword.put(worker_opts, :name, name))
-        Registry.register(registry_name, name, worker)
-
-      :anthropic ->
-        worker = AnthropicWorker.new(Keyword.put(worker_opts, :name, name))
-        Registry.register(registry_name, name, worker)
-
-      :xai ->
-        worker = XAIWorker.new(Keyword.put(worker_opts, :name, name))
-        Registry.register(registry_name, name, worker)
-
-      :gemini_pro_25 ->
-        worker = GeminiWorker.new(Keyword.put(worker_opts, :name, name))
-        Registry.register(registry_name, name, worker)
-
-      :ollama ->
-        worker = OllamaWorker.new(Keyword.put(worker_opts, :name, name))
-        Registry.register(registry_name, name, worker)
-
-      :groq ->
-        worker = GroqWorker.new(Keyword.put(worker_opts, :name, name))
-        Registry.register(registry_name, name, worker)
-
-      :gemini ->
-        worker = GeminiWorker.new(Keyword.put(worker_opts, :name, name))
-        Registry.register(registry_name, name, worker)
-
-      :cohere ->
-        worker = CohereWorker.new(Keyword.put(worker_opts, :name, name))
-        Registry.register(registry_name, name, worker)
-
-      :tavily ->
-        worker = TavilyWorker.new(Keyword.put(worker_opts, :name, name))
-        Registry.register(registry_name, name, worker)
-
-      :serper ->
-        worker = SerperWorker.new(Keyword.put(worker_opts, :name, name))
-        Registry.register(registry_name, name, worker)
-
-      :brave ->
-        worker = BraveWorker.new(Keyword.put(worker_opts, :name, name))
-        Registry.register(registry_name, name, worker)
-
-      :pubmed ->
-        worker = PubMedWorker.new(Keyword.put(worker_opts, :name, name))
-        Registry.register(registry_name, name, worker)
-
-      :duckduckgo ->
-        worker = DuckDuckGoWorker.new(Keyword.put(worker_opts, :name, name))
-        Registry.register(registry_name, name, worker)
-
-      _ ->
-        {:error, :unsupported_worker_type}
+    case create_worker(worker_opts[:type], name, worker_opts) do
+      {:error, _} = error -> error
+      worker -> Registry.register(registry_name, name, worker)
     end
   end
+
+  defp create_worker(:openai, name, opts),
+    do: OpenAIWorker.new(Keyword.put(opts, :name, name))
+
+  defp create_worker(:openai_embeddings, name, opts),
+    do: OpenAIEmbeddingsWorker.new(Keyword.put(opts, :name, name))
+
+  defp create_worker(:anthropic, name, opts),
+    do: AnthropicWorker.new(Keyword.put(opts, :name, name))
+
+  defp create_worker(:xai, name, opts),
+    do: XAIWorker.new(Keyword.put(opts, :name, name))
+
+  defp create_worker(:gemini_pro_25, name, opts),
+    do: GeminiWorker.new(Keyword.put(opts, :name, name))
+
+  defp create_worker(:ollama, name, opts),
+    do: OllamaWorker.new(Keyword.put(opts, :name, name))
+
+  defp create_worker(:groq, name, opts),
+    do: GroqWorker.new(Keyword.put(opts, :name, name))
+
+  defp create_worker(:gemini, name, opts),
+    do: GeminiWorker.new(Keyword.put(opts, :name, name))
+
+  defp create_worker(:cohere, name, opts),
+    do: CohereWorker.new(Keyword.put(opts, :name, name))
+
+  defp create_worker(:tavily, name, opts),
+    do: TavilyWorker.new(Keyword.put(opts, :name, name))
+
+  defp create_worker(:serper, name, opts),
+    do: SerperWorker.new(Keyword.put(opts, :name, name))
+
+  defp create_worker(:brave, name, opts),
+    do: BraveWorker.new(Keyword.put(opts, :name, name))
+
+  defp create_worker(:pubmed, name, opts),
+    do: PubMedWorker.new(Keyword.put(opts, :name, name))
+
+  defp create_worker(:duckduckgo, name, opts),
+    do: DuckDuckGoWorker.new(Keyword.put(opts, :name, name))
+
+  defp create_worker(_, _name, _opts), do: {:error, :unsupported_worker_type}
 
   @doc """
   Remueve un worker del registry.
@@ -229,7 +209,7 @@ defmodule CortexCore.Workers.Supervisor do
       Logger.warning("No se encontraron API keys válidos. Revisa tu archivo .env")
     else
       Logger.info(
-        "Configurados #{length(workers_to_register)} workers: #{Enum.map(workers_to_register, &elem(&1, 0)) |> Enum.join(", ")}"
+        "Configurados #{length(workers_to_register)} workers: #{Enum.map_join(workers_to_register, ", ", &elem(&1, 0))}"
       )
     end
   end
@@ -254,7 +234,9 @@ defmodule CortexCore.Workers.Supervisor do
   defp maybe_add_openai_worker(workers) do
     openai_keys = get_env_list("OPENAI_API_KEYS")
 
-    if not Enum.empty?(openai_keys) do
+    if Enum.empty?(openai_keys) do
+      workers
+    else
       openai_model = System.get_env("OPENAI_MODEL", "gpt-5")
 
       worker =
@@ -266,15 +248,15 @@ defmodule CortexCore.Workers.Supervisor do
         )
 
       [{"openai-primary", worker} | workers]
-    else
-      workers
     end
   end
 
   defp maybe_add_anthropic_worker(workers) do
     anthropic_keys = get_env_list("ANTHROPIC_API_KEYS")
 
-    if not Enum.empty?(anthropic_keys) do
+    if Enum.empty?(anthropic_keys) do
+      workers
+    else
       anthropic_model = System.get_env("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
 
       worker =
@@ -286,15 +268,15 @@ defmodule CortexCore.Workers.Supervisor do
         )
 
       [{"anthropic-primary", worker} | workers]
-    else
-      workers
     end
   end
 
   defp maybe_add_xai_worker(workers) do
     xai_keys = get_env_list("XAI_API_KEYS")
 
-    if not Enum.empty?(xai_keys) do
+    if Enum.empty?(xai_keys) do
+      workers
+    else
       xai_model = System.get_env("XAI_MODEL", "grok-code-fast-1")
 
       worker =
@@ -306,15 +288,15 @@ defmodule CortexCore.Workers.Supervisor do
         )
 
       [{"xai-primary", worker} | workers]
-    else
-      workers
     end
   end
 
   defp maybe_add_gemini_pro_25_worker(workers) do
     gemini_pro_25_keys = get_env_list("GEMINI_PRO_25_API_KEYS")
 
-    if not Enum.empty?(gemini_pro_25_keys) do
+    if Enum.empty?(gemini_pro_25_keys) do
+      workers
+    else
       gemini_pro_25_model = System.get_env("GEMINI_PRO_25_MODEL", "gemini-3-flash-preview")
 
       worker =
@@ -326,15 +308,15 @@ defmodule CortexCore.Workers.Supervisor do
         )
 
       [{"gemini-pro-25-primary", worker} | workers]
-    else
-      workers
     end
   end
 
   defp maybe_add_groq_worker(workers) do
     groq_keys = get_env_list("GROQ_API_KEYS")
 
-    if not Enum.empty?(groq_keys) do
+    if Enum.empty?(groq_keys) do
+      workers
+    else
       groq_model = System.get_env("GROQ_MODEL", "llama-3.1-8b-instant")
       Logger.info("Configurando Groq worker con modelo: #{groq_model}")
 
@@ -347,15 +329,15 @@ defmodule CortexCore.Workers.Supervisor do
         )
 
       [{"groq-primary", worker} | workers]
-    else
-      workers
     end
   end
 
   defp maybe_add_gemini_worker(workers) do
     gemini_keys = get_env_list("GEMINI_API_KEYS")
 
-    if not Enum.empty?(gemini_keys) do
+    if Enum.empty?(gemini_keys) do
+      workers
+    else
       gemini_model = System.get_env("GEMINI_MODEL", "gemini-3-flash-preview")
 
       worker =
@@ -367,15 +349,15 @@ defmodule CortexCore.Workers.Supervisor do
         )
 
       [{"gemini-primary", worker} | workers]
-    else
-      workers
     end
   end
 
   defp maybe_add_cohere_worker(workers) do
     cohere_keys = get_env_list("COHERE_API_KEYS")
 
-    if not Enum.empty?(cohere_keys) do
+    if Enum.empty?(cohere_keys) do
+      workers
+    else
       cohere_model = System.get_env("COHERE_MODEL", "command-light")
 
       worker =
@@ -387,13 +369,11 @@ defmodule CortexCore.Workers.Supervisor do
         )
 
       [{"cohere-primary", worker} | workers]
-    else
-      workers
     end
   end
 
   defp maybe_add_ollama_worker(workers) do
-    # Ollama siempre está disponible como local fallback  
+    # Ollama siempre está disponible como local fallback
     ollama_url = System.get_env("OLLAMA_BASE_URL", "http://localhost:11434")
     ollama_model = System.get_env("OLLAMA_MODEL", "gemma3:4b")
 
@@ -429,9 +409,14 @@ defmodule CortexCore.Workers.Supervisor do
   defp maybe_add_openai_embeddings_worker(workers) do
     embeddings_keys = get_env_list("OPENAI_EMBEDDINGS_API_KEYS")
 
-    if not Enum.empty?(embeddings_keys) do
-      embeddings_model = System.get_env("OPENAI_EMBEDDINGS_DEFAULT_MODEL", "text-embedding-3-small")
-      embeddings_timeout = System.get_env("OPENAI_EMBEDDINGS_TIMEOUT", "30000") |> String.to_integer()
+    if Enum.empty?(embeddings_keys) do
+      workers
+    else
+      embeddings_model =
+        System.get_env("OPENAI_EMBEDDINGS_DEFAULT_MODEL", "text-embedding-3-small")
+
+      embeddings_timeout =
+        System.get_env("OPENAI_EMBEDDINGS_TIMEOUT", "30000") |> String.to_integer()
 
       worker =
         OpenAIEmbeddingsWorker.new(
@@ -442,15 +427,15 @@ defmodule CortexCore.Workers.Supervisor do
         )
 
       [{"openai-embeddings-primary", worker} | workers]
-    else
-      workers
     end
   end
 
   defp maybe_add_tavily_worker(workers) do
     tavily_keys = get_env_list("TAVILY_API_KEY")
 
-    if not Enum.empty?(tavily_keys) do
+    if Enum.empty?(tavily_keys) do
+      workers
+    else
       worker =
         TavilyWorker.new(
           name: "tavily-primary",
@@ -459,15 +444,15 @@ defmodule CortexCore.Workers.Supervisor do
         )
 
       [{"tavily-primary", worker} | workers]
-    else
-      workers
     end
   end
 
   defp maybe_add_serper_worker(workers) do
     serper_keys = get_env_list("SERPER_API_KEY")
 
-    if not Enum.empty?(serper_keys) do
+    if Enum.empty?(serper_keys) do
+      workers
+    else
       worker =
         SerperWorker.new(
           name: "serper-primary",
@@ -476,15 +461,15 @@ defmodule CortexCore.Workers.Supervisor do
         )
 
       [{"serper-primary", worker} | workers]
-    else
-      workers
     end
   end
 
   defp maybe_add_brave_worker(workers) do
     brave_keys = get_env_list("BRAVE_API_KEY")
 
-    if not Enum.empty?(brave_keys) do
+    if Enum.empty?(brave_keys) do
+      workers
+    else
       worker =
         BraveWorker.new(
           name: "brave-primary",
@@ -493,8 +478,6 @@ defmodule CortexCore.Workers.Supervisor do
         )
 
       [{"brave-primary", worker} | workers]
-    else
-      workers
     end
   end
 

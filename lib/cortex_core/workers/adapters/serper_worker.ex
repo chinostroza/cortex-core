@@ -62,10 +62,13 @@ defmodule CortexCore.Workers.Adapters.SerperWorker do
   def call(worker, params, _opts) do
     query = Map.fetch!(params, :query)
     num = Map.get(params, :max_results, 10)
-    search_type = Map.get(params, :search_type, "search")  # search, news, images, shopping, places
+    # search, news, images, shopping, places
+    search_type = Map.get(params, :search_type, "search")
     location = Map.get(params, :location)
-    gl = Map.get(params, :gl, "us")  # Geographic location
-    hl = Map.get(params, :hl, "en")  # Language
+    # Geographic location
+    gl = Map.get(params, :gl, "us")
+    # Language
+    hl = Map.get(params, :hl, "en")
 
     execute_search(worker, query, num, search_type, location, gl, hl)
   end
@@ -137,7 +140,8 @@ defmodule CortexCore.Workers.Adapters.SerperWorker do
   end
 
   @impl true
-  def priority(_worker), do: 10  # Highest priority (Google results quality)
+  # Highest priority (Google results quality)
+  def priority(_worker), do: 10
 
   # ============================================
   # Public API
@@ -162,11 +166,12 @@ defmodule CortexCore.Workers.Adapters.SerperWorker do
       )
   """
   def new(opts) do
-    api_keys = case Keyword.get(opts, :api_keys) do
-      keys when is_list(keys) and keys != [] -> keys
-      single_key when is_binary(single_key) -> [single_key]
-      _ -> raise ArgumentError, "api_keys debe ser una lista no vacía o string"
-    end
+    api_keys =
+      case Keyword.get(opts, :api_keys) do
+        keys when is_list(keys) and keys != [] -> keys
+        single_key when is_binary(single_key) -> [single_key]
+        _ -> raise ArgumentError, "api_keys debe ser una lista no vacía o string"
+      end
 
     %__MODULE__{
       name: Keyword.fetch!(opts, :name),
@@ -184,65 +189,66 @@ defmodule CortexCore.Workers.Adapters.SerperWorker do
 
   defp execute_search(worker, query, num, search_type, location, gl, hl) do
     api_key = get_current_key(worker)
+    headers = [{"X-API-KEY", api_key}, {"Content-Type", "application/json"}]
 
-    headers = [
-      {"X-API-KEY", api_key},
-      {"Content-Type", "application/json"}
-    ]
+    payload =
+      %{"q" => query, "num" => num, "gl" => gl, "hl" => hl}
+      |> maybe_add_location(location)
 
-    # Build payload
-    payload = %{
-      "q" => query,
-      "num" => num,
-      "gl" => gl,
-      "hl" => hl
-    }
-
-    payload = if location, do: Map.put(payload, "location", location), else: payload
-
-    # Determine endpoint based on search type
     url = "#{worker.base_url}/#{search_type}"
-
     Logger.debug("Serper search: query=#{query}, type=#{search_type}, num=#{num}")
 
-    case Req.post(url, headers: headers, json: payload, receive_timeout: worker.timeout, retry: false) do
-      {:ok, %{status: 200, body: body}} ->
-        Logger.info("Serper search successful: #{query}")
-        {:ok, parse_response(body, search_type)}
+    Req.post(url, headers: headers, json: payload, receive_timeout: worker.timeout, retry: false)
+    |> handle_serper_response(query, search_type)
+  end
 
-      {:ok, %{status: 429, body: body}} ->
-        error_msg = extract_error_message(body)
-        Logger.warning("Serper rate limited: #{inspect(error_msg)}")
-        {:error, {:rate_limited, error_msg}}
+  defp maybe_add_location(payload, nil), do: payload
+  defp maybe_add_location(payload, location), do: Map.put(payload, "location", location)
 
-      {:ok, %{status: 403, body: body}} ->
-        error_msg = extract_error_message(body)
-        Logger.error("Serper quota exceeded: #{inspect(error_msg)}")
-        {:error, {:quota_exceeded, error_msg}}
+  defp handle_serper_response({:ok, %{status: 200, body: body}}, query, search_type) do
+    Logger.info("Serper search successful: #{query}")
+    {:ok, parse_response(body, search_type)}
+  end
 
-      {:ok, %{status: 401, body: body}} ->
-        error_msg = extract_error_message(body)
-        Logger.error("Serper unauthorized: #{inspect(error_msg)}")
-        {:error, {:unauthorized, error_msg}}
+  defp handle_serper_response({:ok, %{status: 429, body: body}}, _query, _search_type) do
+    error_msg = extract_error_message(body)
+    Logger.warning("Serper rate limited: #{inspect(error_msg)}")
+    {:error, {:rate_limited, error_msg}}
+  end
 
-      {:ok, %{status: 400, body: body}} ->
-        error_msg = extract_error_message(body)
-        Logger.error("Serper bad request: #{inspect(error_msg)}")
-        {:error, {:bad_request, error_msg}}
+  defp handle_serper_response({:ok, %{status: 403, body: body}}, _query, _search_type) do
+    error_msg = extract_error_message(body)
+    Logger.error("Serper quota exceeded: #{inspect(error_msg)}")
+    {:error, {:quota_exceeded, error_msg}}
+  end
 
-      {:ok, %{status: status, body: body}} when status >= 400 ->
-        error_msg = extract_error_message(body)
-        Logger.error("Serper HTTP error #{status}: #{inspect(error_msg)}")
-        {:error, {:http_error, status, error_msg}}
+  defp handle_serper_response({:ok, %{status: 401, body: body}}, _query, _search_type) do
+    error_msg = extract_error_message(body)
+    Logger.error("Serper unauthorized: #{inspect(error_msg)}")
+    {:error, {:unauthorized, error_msg}}
+  end
 
-      {:error, %{reason: :timeout}} ->
-        Logger.error("Serper request timeout")
-        {:error, :timeout}
+  defp handle_serper_response({:ok, %{status: 400, body: body}}, _query, _search_type) do
+    error_msg = extract_error_message(body)
+    Logger.error("Serper bad request: #{inspect(error_msg)}")
+    {:error, {:bad_request, error_msg}}
+  end
 
-      {:error, reason} ->
-        Logger.error("Serper request failed: #{inspect(reason)}")
-        {:error, reason}
-    end
+  defp handle_serper_response({:ok, %{status: status, body: body}}, _query, _search_type)
+       when status >= 400 do
+    error_msg = extract_error_message(body)
+    Logger.error("Serper HTTP error #{status}: #{inspect(error_msg)}")
+    {:error, {:http_error, status, error_msg}}
+  end
+
+  defp handle_serper_response({:error, %{reason: :timeout}}, _query, _search_type) do
+    Logger.error("Serper request timeout")
+    {:error, :timeout}
+  end
+
+  defp handle_serper_response({:error, reason}, _query, _search_type) do
+    Logger.error("Serper request failed: #{inspect(reason)}")
+    {:error, reason}
   end
 
   defp get_current_key(worker) do
@@ -276,15 +282,16 @@ defmodule CortexCore.Workers.Adapters.SerperWorker do
   defp parse_web_search(body) do
     organic = Map.get(body, "organic", [])
 
-    results = Enum.map(organic, fn result ->
-      %{
-        "title" => Map.get(result, "title"),
-        "url" => Map.get(result, "link"),
-        "snippet" => Map.get(result, "snippet"),
-        "position" => Map.get(result, "position"),
-        "date" => Map.get(result, "date")
-      }
-    end)
+    results =
+      Enum.map(organic, fn result ->
+        %{
+          "title" => Map.get(result, "title"),
+          "url" => Map.get(result, "link"),
+          "snippet" => Map.get(result, "snippet"),
+          "position" => Map.get(result, "position"),
+          "date" => Map.get(result, "date")
+        }
+      end)
 
     %{
       results: results,
@@ -299,16 +306,17 @@ defmodule CortexCore.Workers.Adapters.SerperWorker do
   defp parse_news_search(body) do
     news = Map.get(body, "news", [])
 
-    results = Enum.map(news, fn article ->
-      %{
-        "title" => Map.get(article, "title"),
-        "url" => Map.get(article, "link"),
-        "snippet" => Map.get(article, "snippet"),
-        "source" => Map.get(article, "source"),
-        "date" => Map.get(article, "date"),
-        "image_url" => Map.get(article, "imageUrl")
-      }
-    end)
+    results =
+      Enum.map(news, fn article ->
+        %{
+          "title" => Map.get(article, "title"),
+          "url" => Map.get(article, "link"),
+          "snippet" => Map.get(article, "snippet"),
+          "source" => Map.get(article, "source"),
+          "date" => Map.get(article, "date"),
+          "image_url" => Map.get(article, "imageUrl")
+        }
+      end)
 
     %{
       results: results,
@@ -319,15 +327,16 @@ defmodule CortexCore.Workers.Adapters.SerperWorker do
   defp parse_image_search(body) do
     images = Map.get(body, "images", [])
 
-    results = Enum.map(images, fn image ->
-      %{
-        "title" => Map.get(image, "title"),
-        "url" => Map.get(image, "link"),
-        "image_url" => Map.get(image, "imageUrl"),
-        "source" => Map.get(image, "source"),
-        "position" => Map.get(image, "position")
-      }
-    end)
+    results =
+      Enum.map(images, fn image ->
+        %{
+          "title" => Map.get(image, "title"),
+          "url" => Map.get(image, "link"),
+          "image_url" => Map.get(image, "imageUrl"),
+          "source" => Map.get(image, "source"),
+          "position" => Map.get(image, "position")
+        }
+      end)
 
     %{
       results: results,
@@ -338,16 +347,17 @@ defmodule CortexCore.Workers.Adapters.SerperWorker do
   defp parse_shopping_search(body) do
     shopping = Map.get(body, "shopping", [])
 
-    results = Enum.map(shopping, fn product ->
-      %{
-        "title" => Map.get(product, "title"),
-        "url" => Map.get(product, "link"),
-        "price" => Map.get(product, "price"),
-        "source" => Map.get(product, "source"),
-        "rating" => Map.get(product, "rating"),
-        "image_url" => Map.get(product, "imageUrl")
-      }
-    end)
+    results =
+      Enum.map(shopping, fn product ->
+        %{
+          "title" => Map.get(product, "title"),
+          "url" => Map.get(product, "link"),
+          "price" => Map.get(product, "price"),
+          "source" => Map.get(product, "source"),
+          "rating" => Map.get(product, "rating"),
+          "image_url" => Map.get(product, "imageUrl")
+        }
+      end)
 
     %{
       results: results,
@@ -358,17 +368,18 @@ defmodule CortexCore.Workers.Adapters.SerperWorker do
   defp parse_places_search(body) do
     places = Map.get(body, "places", [])
 
-    results = Enum.map(places, fn place ->
-      %{
-        "title" => Map.get(place, "title"),
-        "address" => Map.get(place, "address"),
-        "rating" => Map.get(place, "rating"),
-        "reviews" => Map.get(place, "reviews"),
-        "phone" => Map.get(place, "phoneNumber"),
-        "website" => Map.get(place, "website"),
-        "position" => Map.get(place, "position")
-      }
-    end)
+    results =
+      Enum.map(places, fn place ->
+        %{
+          "title" => Map.get(place, "title"),
+          "address" => Map.get(place, "address"),
+          "rating" => Map.get(place, "rating"),
+          "reviews" => Map.get(place, "reviews"),
+          "phone" => Map.get(place, "phoneNumber"),
+          "website" => Map.get(place, "website"),
+          "position" => Map.get(place, "position")
+        }
+      end)
 
     %{
       results: results,
@@ -378,9 +389,9 @@ defmodule CortexCore.Workers.Adapters.SerperWorker do
 
   defp extract_error_message(body) when is_map(body) do
     Map.get(body, "message") ||
-    Map.get(body, "error") ||
-    Map.get(body, "detail") ||
-    "Unknown error"
+      Map.get(body, "error") ||
+      Map.get(body, "detail") ||
+      "Unknown error"
   end
 
   defp extract_error_message(body) when is_binary(body), do: body

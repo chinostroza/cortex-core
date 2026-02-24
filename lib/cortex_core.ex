@@ -351,11 +351,12 @@ defmodule CortexCore do
     }
 
     # Add optional dimensions parameter
-    params = if opts[:dimensions] do
-      Map.put(params, :dimensions, opts[:dimensions])
-    else
-      params
-    end
+    params =
+      if opts[:dimensions] do
+        Map.put(params, :dimensions, opts[:dimensions])
+      else
+        params
+      end
 
     case call(:embeddings, params, opts) do
       {:ok, %{embedding: embedding}} ->
@@ -422,7 +423,7 @@ defmodule CortexCore do
   def list_workers do
     Workers.Supervisor.list_workers()
     |> Enum.map(fn worker ->
-      apply(worker.__struct__, :info, [worker])
+      worker.__struct__.info(worker)
     end)
   end
 

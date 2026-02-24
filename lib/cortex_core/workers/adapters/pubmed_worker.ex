@@ -138,7 +138,8 @@ defmodule CortexCore.Workers.Adapters.PubMedWorker do
   end
 
   @impl true
-  def priority(_worker), do: 5  # Higher priority than Serper for scientific queries
+  # Higher priority than Serper for scientific queries
+  def priority(_worker), do: 5
 
   # ============================================
   # Public API
@@ -208,39 +209,43 @@ defmodule CortexCore.Workers.Adapters.PubMedWorker do
   end
 
   defp build_pubmed_query(query, publication_type, year_start, year_end) do
-    filters = []
+    filters =
+      []
+      |> maybe_add_publication_type_filter(publication_type)
+      |> maybe_add_date_filter(year_start, year_end)
 
-    # Add publication type filter
-    filters = if publication_type do
-      type_filter = case String.downcase(publication_type) do
-        "review" -> "[Publication Type]"
-        "systematic review" -> "systematic[sb]"
-        "meta-analysis" -> "meta-analysis[Publication Type]"
-        "rct" -> "randomized controlled trial[Publication Type]"
-        "clinical trial" -> "clinical trial[Publication Type]"
-        _ -> nil
-      end
-
-      if type_filter, do: [publication_type <> " " <> type_filter | filters], else: filters
-    else
-      filters
-    end
-
-    # Add date range filter
-    filters = if year_start || year_end do
-      start_year = year_start || 1900
-      end_year = year_end || DateTime.utc_now().year
-      ["#{start_year}:#{end_year}[pdat]" | filters]
-    else
-      filters
-    end
-
-    # Combine query with filters
     if Enum.empty?(filters) do
       query
     else
       query <> " AND " <> Enum.join(filters, " AND ")
     end
+  end
+
+  defp maybe_add_publication_type_filter(filters, nil), do: filters
+
+  defp maybe_add_publication_type_filter(filters, publication_type) do
+    type_filter = get_publication_type_filter(String.downcase(publication_type))
+
+    if type_filter do
+      [publication_type <> " " <> type_filter | filters]
+    else
+      filters
+    end
+  end
+
+  defp get_publication_type_filter("review"), do: "[Publication Type]"
+  defp get_publication_type_filter("systematic review"), do: "systematic[sb]"
+  defp get_publication_type_filter("meta-analysis"), do: "meta-analysis[Publication Type]"
+  defp get_publication_type_filter("rct"), do: "randomized controlled trial[Publication Type]"
+  defp get_publication_type_filter("clinical trial"), do: "clinical trial[Publication Type]"
+  defp get_publication_type_filter(_), do: nil
+
+  defp maybe_add_date_filter(filters, nil, nil), do: filters
+
+  defp maybe_add_date_filter(filters, year_start, year_end) do
+    start_year = year_start || 1900
+    end_year = year_end || DateTime.utc_now().year
+    ["#{start_year}:#{end_year}[pdat]" | filters]
   end
 
   defp search_pmids(worker, query, max_results) do
@@ -249,7 +254,8 @@ defmodule CortexCore.Workers.Adapters.PubMedWorker do
     params = [
       db: "pubmed",
       term: query,
-      retmax: min(max_results, 200),  # PubMed max is 200
+      # PubMed max is 200
+      retmax: min(max_results, 200),
       retmode: "json",
       sort: "relevance"
     ]
@@ -322,11 +328,12 @@ defmodule CortexCore.Workers.Adapters.PubMedWorker do
       result when is_map(result) ->
         uids = Map.get(result, "uids", [])
 
-        articles = Enum.map(uids, fn uid ->
-          article = Map.get(result, uid, %{})
-          parse_article(article)
-        end)
-        |> Enum.reject(&is_nil/1)
+        articles =
+          Enum.map(uids, fn uid ->
+            article = Map.get(result, uid, %{})
+            parse_article(article)
+          end)
+          |> Enum.reject(&is_nil/1)
 
         {:ok, articles}
 
@@ -339,15 +346,16 @@ defmodule CortexCore.Workers.Adapters.PubMedWorker do
 
   defp parse_article(article) when is_map(article) do
     # Extract authors
-    authors = case Map.get(article, "authors") do
-      authors_list when is_list(authors_list) ->
-        Enum.map(authors_list, fn author ->
-          Map.get(author, "name", "")
-        end)
-        |> Enum.join(", ")
+    authors =
+      case Map.get(article, "authors") do
+        authors_list when is_list(authors_list) ->
+          Enum.map_join(authors_list, ", ", fn author ->
+            Map.get(author, "name", "")
+          end)
 
-      _ -> ""
-    end
+        _ ->
+          ""
+      end
 
     # Extract publication date
     pub_date = Map.get(article, "pubdate", "")
@@ -356,13 +364,15 @@ defmodule CortexCore.Workers.Adapters.PubMedWorker do
     journal = Map.get(article, "fulljournalname", Map.get(article, "source", ""))
 
     # Extract DOI from articleids
-    doi = case Map.get(article, "articleids") do
-      ids when is_list(ids) ->
-        doi_entry = Enum.find(ids, fn id -> Map.get(id, "idtype") == "doi" end)
-        if doi_entry, do: Map.get(doi_entry, "value"), else: nil
+    doi =
+      case Map.get(article, "articleids") do
+        ids when is_list(ids) ->
+          doi_entry = Enum.find(ids, fn id -> Map.get(id, "idtype") == "doi" end)
+          if doi_entry, do: Map.get(doi_entry, "value"), else: nil
 
-      _ -> nil
-    end
+        _ ->
+          nil
+      end
 
     # Build PubMed URL
     pmid = Map.get(article, "uid")
