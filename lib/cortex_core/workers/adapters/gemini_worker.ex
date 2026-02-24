@@ -98,6 +98,7 @@ defmodule CortexCore.Workers.Adapters.GeminiWorker do
     %{
       base_url: @base_url,
       stream_endpoint: "/v1beta/models/#{model}:generateContent",
+      tools_endpoint: "/v1beta/models/#{model}:generateContent",
       health_endpoint: @base_url <> "/v1beta/models",
       model_param: "model",
       headers_fn: &build_headers/1,
@@ -143,6 +144,37 @@ defmodule CortexCore.Workers.Adapters.GeminiWorker do
     end
   end
   
+  def call_with_tools(worker, messages, tools, opts) do
+    APIWorkerBase.call_with_tools(worker, messages, tools, opts)
+  end
+
+  def transform_tools(tools) do
+    declarations =
+      Enum.map(tools, fn %{"function" => f} ->
+        %{
+          "name" => f["name"],
+          "description" => f["description"],
+          "parameters" => f["parameters"]
+        }
+      end)
+
+    %{"tools" => [%{"function_declarations" => declarations}]}
+  end
+
+  def extract_tool_calls(body) do
+    case body do
+      %{"candidates" => [%{"content" => %{"parts" => parts}} | _]} ->
+        parts
+        |> Enum.filter(&Map.has_key?(&1, "functionCall"))
+        |> Enum.map(fn %{"functionCall" => %{"name" => name, "args" => args}} ->
+          %{name: name, arguments: args}
+        end)
+
+      _ ->
+        []
+    end
+  end
+
   @doc """
   Rota al siguiente API key disponible.
   """

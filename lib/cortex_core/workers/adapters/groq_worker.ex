@@ -102,6 +102,7 @@ defmodule CortexCore.Workers.Adapters.GroqWorker do
     %{
       base_url: @base_url,
       stream_endpoint: @stream_endpoint,
+      tools_endpoint: @stream_endpoint,
       health_endpoint: @base_url <> "/openai/v1/models",
       model_param: "model",
       headers_fn: &build_headers/1,
@@ -135,6 +136,31 @@ defmodule CortexCore.Workers.Adapters.GroqWorker do
     end
   end
   
+  def call_with_tools(worker, messages, tools, opts) do
+    APIWorkerBase.call_with_tools(worker, messages, tools, opts)
+  end
+
+  def transform_tools(tools), do: %{"tools" => tools}
+
+  def extract_tool_calls(body) do
+    case body do
+      %{"choices" => [%{"message" => %{"tool_calls" => calls}} | _]} ->
+        Enum.flat_map(calls, fn
+          %{"function" => %{"name" => name, "arguments" => args}} ->
+            case Jason.decode(args) do
+              {:ok, parsed} -> [%{name: name, arguments: parsed}]
+              {:error, _} -> []
+            end
+
+          _ ->
+            []
+        end)
+
+      _ ->
+        []
+    end
+  end
+
   @doc """
   Rota al siguiente API key disponible.
   """

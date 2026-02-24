@@ -91,6 +91,38 @@ defmodule CortexCore.Dispatcher do
   end
 
   @doc """
+  Despacha una llamada con tool use / function calling a un provider específico.
+
+  Requiere que el provider sea especificado explícitamente via opts[:provider].
+  No usa auto-selección ya que el tool use requiere providers con soporte explícito.
+
+  ## Args
+    - messages: Lista de mensajes en formato OpenAI
+    - tools: Lista de herramientas en formato OpenAI function calling
+    - opts: Opciones - :provider (requerido), :model, :tool_choice
+
+  ## Returns
+    - `{:ok, tool_calls}` lista de %{name: name, arguments: args}
+    - `{:error, :no_provider_specified}` si no se especificó provider
+    - `{:error, {:provider_not_found, name}}` si el provider no existe
+  """
+  def dispatch_tools(messages, tools, opts \\ []) do
+    case Keyword.get(opts, :provider) do
+      nil ->
+        {:error, :no_provider_specified}
+
+      name ->
+        case CortexCore.Workers.Registry.get(CortexCore.Workers.Registry, name) do
+          {:ok, worker} ->
+            apply(worker.__struct__, :call_with_tools, [worker, messages, tools, opts])
+
+          {:error, :not_found} ->
+            {:error, {:provider_not_found, name}}
+        end
+    end
+  end
+
+  @doc """
   Obtiene el estado de salud de todos los workers.
   """
   def health_status do

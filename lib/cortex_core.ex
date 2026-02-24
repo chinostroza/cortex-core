@@ -249,6 +249,41 @@ defmodule CortexCore do
   defdelegate stream_completion(messages, opts \\ []), to: __MODULE__, as: :chat
 
   @doc """
+  Calls an AI provider with tool definitions and returns structured tool_calls.
+
+  Requires explicit provider selection. Does not use auto-selection since tool
+  use requires providers with explicit support (Gemini, Groq).
+
+  ## Parameters
+
+    * `messages` - List of message maps with `:role` and `:content` keys
+    * `tools` - List of tool definitions in OpenAI function calling format
+    * `opts` - Options including `:provider` (required), `:model`, `:tool_choice`
+
+  ## Examples
+
+      {:ok, tool_calls} = CortexCore.call_with_tools(
+        [%{"role" => "user", "content" => "Extract data from this spec..."}],
+        [%{"type" => "function", "function" => %{"name" => "extract", ...}}],
+        provider: "gemini-primary"
+      )
+
+  ## Returns
+
+    * `{:ok, [%{name: "fn_name", arguments: %{...}}]}` - Success with tool calls
+    * `{:error, :no_provider_specified}` - Provider is required for tool use
+    * `{:error, {:provider_not_found, name}}` - Provider not registered
+    * `{:error, :rate_limited}` - Provider rate limited
+    * `{:error, reason}` - Other errors
+  """
+  @spec call_with_tools(list(message()), list(map()), keyword()) ::
+          {:ok, list(map())} | {:error, term()}
+  def call_with_tools(messages, tools, opts \\ [])
+      when is_list(messages) and is_list(tools) do
+    Dispatcher.dispatch_tools(messages, tools, opts)
+  end
+
+  @doc """
   Embeds text into a vector representation for semantic search and RAG.
 
   This is a convenience function that wraps `call(:embeddings, ...)` and

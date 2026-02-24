@@ -59,6 +59,33 @@ defmodule CortexCore.Workers.Adapters.APIWorkerBase do
   
   defp quota_exceeded?(_), do: false
   
+  def call_with_tools(worker, messages, tools, opts) do
+    config = apply(worker.__struct__, :provider_config, [worker])
+    headers = apply(config.headers_fn, [worker])
+    transformed_messages = apply(worker.__struct__, :transform_messages, [messages, opts])
+    transformed_tools = apply(worker.__struct__, :transform_tools, [tools])
+    payload = build_tools_payload(worker, transformed_messages, transformed_tools, config, opts)
+
+    endpoint = Map.get(config, :tools_endpoint, config.stream_endpoint)
+    url = config.base_url <> endpoint
+
+    case Req.post(url, json: payload, headers: headers,
+                  receive_timeout: worker.timeout, retry: false) do
+      {:ok, %{status: 200, body: body}} ->
+        tool_calls = apply(worker.__struct__, :extract_tool_calls, [body])
+        {:ok, tool_calls}
+
+      {:ok, %{status: 429}} ->
+        {:error, :rate_limited}
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, {status, body}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   def stream_completion(worker, messages, opts) do
     config = apply(worker.__struct__, :provider_config, [worker])
     
@@ -94,7 +121,27 @@ defmodule CortexCore.Workers.Adapters.APIWorkerBase do
   end
   
   # Funciones privadas
-  
+
+  defp build_tools_payload(worker, messages, tools_map, config, opts) do
+    model = Keyword.get(opts, :model, worker.default_model)
+
+    base = cond do
+      # Gemini format: {"contents": [...]} → merge with tools map
+      is_map(messages) and Map.has_key?(messages, "contents") ->
+        Map.merge(messages, tools_map)
+
+      # OpenAI/Groq format: list of messages
+      true ->
+        Map.merge(
+          %{config.model_param => model, "messages" => messages, "stream" => false},
+          tools_map
+        )
+    end
+
+    tool_choice = Keyword.get(opts, :tool_choice)
+    if tool_choice, do: Map.put(base, "tool_choice", tool_choice), else: base
+  end
+
   defp build_payload(worker, messages, config, opts) do
     model = Keyword.get(opts, :model, worker.default_model)
     
