@@ -119,8 +119,11 @@ defmodule CortexCore.Workers.Adapters.OllamaWorker do
 
   defp run_ollama_stream(request, parent, ref) do
     Finch.stream(request, Req.Finch, "", fn
-      {:status, _status}, acc -> acc
-      {:headers, _headers}, acc -> acc
+      {:status, _status}, acc ->
+        acc
+
+      {:headers, _headers}, acc ->
+        acc
 
       {:data, data}, acc ->
         data

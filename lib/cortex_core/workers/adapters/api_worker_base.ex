@@ -139,8 +139,8 @@ defmodule CortexCore.Workers.Adapters.APIWorkerBase do
   defp build_tools_payload(worker, messages, tools_map, config, opts) do
     model = Keyword.get(opts, :model, worker.default_model)
 
+    # Gemini format: {"contents": [...]} → merge with tools map
     base =
-      # Gemini format: {"contents": [...]} → merge with tools map
       if is_map(messages) and Map.has_key?(messages, "contents") do
         Map.merge(messages, tools_map)
       else
@@ -336,13 +336,23 @@ defmodule CortexCore.Workers.Adapters.APIWorkerBase do
   # Función privada para extraer mensaje de error del cuerpo de respuesta
   defp extract_error_message(error_body, status_code) do
     case Jason.decode(error_body) do
-      {:ok, %{"error" => %{"message" => message}}} -> message
-      {:ok, %{"error" => message}} when is_binary(message) -> message
-      {:ok, %{"message" => message}} -> message
-      {:ok, %{"detail" => detail}} -> detail
+      {:ok, %{"error" => %{"message" => message}}} ->
+        message
+
+      {:ok, %{"error" => message}} when is_binary(message) ->
+        message
+
+      {:ok, %{"message" => message}} ->
+        message
+
+      {:ok, %{"detail" => detail}} ->
+        detail
+
       {:ok, %{"errors" => errors}} when is_list(errors) ->
         Enum.map_join(errors, ", ", &Map.get(&1, "message", &1))
-      _ -> extract_text_error_message(error_body, status_code)
+
+      _ ->
+        extract_text_error_message(error_body, status_code)
     end
   rescue
     _ -> get_default_error_message(status_code)

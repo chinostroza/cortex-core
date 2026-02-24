@@ -65,7 +65,7 @@ defmodule CortexCore.Workers.WorkerTest do
 
     test "call/3 result includes opts" do
       worker = %CallWorker{name: "call-worker"}
-      assert {:ok, result} = Worker.invoke(worker, %{q: "x"}, [timeout: 5000])
+      assert {:ok, result} = Worker.invoke(worker, %{q: "x"}, timeout: 5000)
       assert result.opts == [timeout: 5000]
     end
 

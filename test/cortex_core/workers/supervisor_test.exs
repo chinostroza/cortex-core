@@ -191,7 +191,12 @@ defmodule CortexCore.Workers.SupervisorTest do
 
   describe "add_worker/3 with all worker types" do
     test "adds gemini worker successfully", %{supervisor: supervisor} do
-      worker_opts = [type: :gemini, api_keys: ["test_key"], model: "gemini-flash", timeout: 30_000]
+      worker_opts = [
+        type: :gemini,
+        api_keys: ["test_key"],
+        model: "gemini-flash",
+        timeout: 30_000
+      ]
 
       with_mocked_dependencies(fn ->
         result = Supervisor.add_worker(supervisor, "test_gemini", worker_opts)

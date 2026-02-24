@@ -299,7 +299,10 @@ defmodule CortexCore.Workers.PoolTest do
       def priority(_), do: 10
     end
 
-    test "dispatches to named provider for matching service_type", %{pool: pool, registry: registry} do
+    test "dispatches to named provider for matching service_type", %{
+      pool: pool,
+      registry: registry
+    } do
       Registry.register(
         registry,
         "named-search",
@@ -310,7 +313,10 @@ defmodule CortexCore.Workers.PoolTest do
                Pool.call(pool, :search, %{query: "hello"}, provider: "named-search")
     end
 
-    test "returns error when named provider has wrong service_type", %{pool: pool, registry: registry} do
+    test "returns error when named provider has wrong service_type", %{
+      pool: pool,
+      registry: registry
+    } do
       # Register a search worker but call with :vision service_type
       Registry.register(
         registry,
@@ -429,7 +435,10 @@ defmodule CortexCore.Workers.PoolTest do
       def priority(_), do: 10
     end
 
-    test "handles empty stream from worker by trying next worker", %{pool: pool, registry: registry} do
+    test "handles empty stream from worker by trying next worker", %{
+      pool: pool,
+      registry: registry
+    } do
       Registry.register(registry, "empty-stream", %EmptyStreamWorker{name: "empty-stream"})
       messages = [%{"role" => "user", "content" => "test"}]
       result = Pool.stream_completion(pool, messages)
@@ -460,7 +469,10 @@ defmodule CortexCore.Workers.PoolTest do
     end
 
     test "pool handles periodic_health_check message", %{pool: pool, registry: registry} do
-      Registry.register(registry, "periodic-worker", %PeriodicHealthWorker{name: "periodic-worker"})
+      Registry.register(registry, "periodic-worker", %PeriodicHealthWorker{
+        name: "periodic-worker"
+      })
+
       # Trigger the periodic health check manually
       send(pool, :periodic_health_check)
       :timer.sleep(100)
@@ -649,7 +661,10 @@ defmodule CortexCore.Workers.PoolTest do
     end
 
     test "health check marks rate limited workers", %{pool: pool, registry: registry} do
-      Registry.register(registry, "rate-limited-check", %RateLimitedWorker{name: "rate-limited-check"})
+      Registry.register(registry, "rate-limited-check", %RateLimitedWorker{
+        name: "rate-limited-check"
+      })
+
       Pool.check_health(pool)
       :timer.sleep(200)
       status = Pool.health_status(pool)

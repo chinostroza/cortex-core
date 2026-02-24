@@ -188,8 +188,11 @@ defmodule CortexCore.Workers.Pool do
 
   defp select_and_execute_service(state, service_type, params, opts) do
     case Keyword.get(opts, :provider) do
-      nil -> execute_service_by_strategy(state, service_type, params, opts)
-      provider_name -> execute_service_by_provider(state, service_type, provider_name, params, opts)
+      nil ->
+        execute_service_by_strategy(state, service_type, params, opts)
+
+      provider_name ->
+        execute_service_by_provider(state, service_type, provider_name, params, opts)
     end
   end
 
@@ -590,21 +593,38 @@ defmodule CortexCore.Workers.Pool do
       case Worker.invoke(worker, params, opts) do
         {:ok, result} when is_function(result) or is_struct(result, Stream) ->
           validated_stream = validate_stream(result, worker)
-          Logger.info("Worker #{worker.name} respondió exitosamente#{get_worker_model_info(worker)}")
+
+          Logger.info(
+            "Worker #{worker.name} respondió exitosamente#{get_worker_model_info(worker)}"
+          )
+
           {:ok, validated_stream}
 
         {:ok, result} ->
-          Logger.info("Worker #{worker.name} respondió exitosamente#{get_worker_model_info(worker)}")
+          Logger.info(
+            "Worker #{worker.name} respondió exitosamente#{get_worker_model_info(worker)}"
+          )
+
           {:ok, result}
 
         {:error, reason} ->
           error_msg = format_error_reason(reason)
           Logger.warning("Worker #{worker.name} falló: #{error_msg}, intentando siguiente...")
-          execute_service_with_failover(rest, params, opts, [{worker.name, error_msg} | error_details])
+
+          execute_service_with_failover(rest, params, opts, [
+            {worker.name, error_msg} | error_details
+          ])
       end
     rescue
       error ->
-        handle_service_failover_error(worker, rest, params, opts, error_details, Exception.message(error))
+        handle_service_failover_error(
+          worker,
+          rest,
+          params,
+          opts,
+          error_details,
+          Exception.message(error)
+        )
     end
   end
 
@@ -612,7 +632,10 @@ defmodule CortexCore.Workers.Pool do
     if rate_limit_error?(error_msg) and can_rotate_api_key?(worker) do
       handle_rate_limit_rotation(worker, rest, params, opts, error_details, error_msg)
     else
-      Logger.warning("Worker #{worker.name} lanzó excepción: #{error_msg}, intentando siguiente...")
+      Logger.warning(
+        "Worker #{worker.name} lanzó excepción: #{error_msg}, intentando siguiente..."
+      )
+
       execute_service_with_failover(rest, params, opts, [{worker.name, error_msg} | error_details])
     end
   end
