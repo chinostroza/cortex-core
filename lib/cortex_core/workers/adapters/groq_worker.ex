@@ -136,7 +136,12 @@ defmodule CortexCore.Workers.Adapters.GroqWorker do
     end
   end
   
+  @default_tools_model "llama-3.3-70b-versatile"
+
   def call_with_tools(worker, messages, tools, opts) do
+    # llama-3.1-8b-instant (default chat model) is unreliable for tool calling.
+    # Default to a more capable model unless the caller specifies one explicitly.
+    opts = Keyword.put_new(opts, :model, @default_tools_model)
     APIWorkerBase.call_with_tools(worker, messages, tools, opts)
   end
 

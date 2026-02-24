@@ -228,7 +228,14 @@ defmodule CortexCore.Workers.Adapters.DuckDuckGoWorker do
     }
   end
 
-  defp parse_response(body, _max_results), do: body
+  defp parse_response(body, max_results) when is_binary(body) do
+    case Jason.decode(body) do
+      {:ok, parsed} -> parse_response(parsed, max_results)
+      {:error, _} -> %{results: [], error: "Failed to parse response"}
+    end
+  end
+
+  defp parse_response(_, _), do: %{results: []}
 
   defp extract_results(topics, _max_results) when is_list(topics) do
     topics

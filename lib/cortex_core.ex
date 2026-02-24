@@ -1,4 +1,6 @@
 defmodule CortexCore do
+  @behaviour CortexCore.Behaviour
+
   @moduledoc """
   CortexCore - Universal Service Gateway
 
