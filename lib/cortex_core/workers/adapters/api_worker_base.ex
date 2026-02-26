@@ -204,7 +204,7 @@ defmodule CortexCore.Workers.Adapters.APIWorkerBase do
   end
 
   defp run_sse_stream(request, worker, parent, ref) do
-    response_state = %{status: nil, has_error: false, error_body: ""}
+    response_state = %{status: nil, has_error: false, error_body: "", ratelimit: %{}}
 
     result =
       Finch.stream(request, Req.Finch, response_state, fn
@@ -215,8 +215,8 @@ defmodule CortexCore.Workers.Adapters.APIWorkerBase do
             %{acc | status: status}
           end
 
-        {:headers, _headers}, acc ->
-          acc
+        {:headers, headers}, acc ->
+          %{acc | ratelimit: extract_ratelimit_headers(headers)}
 
         {:data, data}, acc ->
           handle_stream_data(data, acc, parent, ref, worker)
@@ -226,12 +226,31 @@ defmodule CortexCore.Workers.Adapters.APIWorkerBase do
       {:error, reason, _acc} ->
         Logger.error("Error de conexión en #{worker.name}: #{inspect(reason)}")
         send(parent, {ref, {:error, :connection_error}})
+        send(parent, {ref, {:done, %{}}})
+
+      {:ok, final_acc} ->
+        send(parent, {ref, {:done, final_acc.ratelimit}})
 
       _ ->
-        :ok
+        send(parent, {ref, {:done, %{}}})
     end
+  end
 
-    send(parent, {ref, :done})
+  defp extract_ratelimit_headers(headers) do
+    headers
+    |> Enum.filter(fn {name, _} -> String.starts_with?(name, "x-ratelimit-") end)
+    |> Enum.map(fn {name, value} ->
+      key = name |> String.replace_prefix("x-ratelimit-", "") |> String.replace("-", "_")
+
+      parsed_value =
+        case Integer.parse(value) do
+          {n, ""} -> n
+          _ -> value
+        end
+
+      {key, parsed_value}
+    end)
+    |> Map.new()
   end
 
   defp handle_stream_data(data, acc, parent, ref, worker) do
@@ -254,8 +273,8 @@ defmodule CortexCore.Workers.Adapters.APIWorkerBase do
 
   defp receive_sse_chunk(state, ref, worker) do
     receive do
-      {^ref, :done} ->
-        nil
+      {^ref, {:done, ratelimit_info}} ->
+        {{:stream_done, ratelimit_info}, nil}
 
       {^ref, {:error, {http_status, message}}} when is_integer(http_status) ->
         Logger.error("Stream terminado por HTTP #{http_status} en #{worker.name}: #{message}")

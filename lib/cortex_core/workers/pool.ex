@@ -378,7 +378,7 @@ defmodule CortexCore.Workers.Pool do
         case validate_stream(stream) do
           :ok ->
             Logger.info("Worker #{worker.name} respondió exitosamente")
-            {:ok, Stream.filter(stream, &is_binary/1)}
+            {:ok, Stream.filter(stream, fn e -> is_binary(e) or match?({:stream_done, _}, e) end)}
 
           {:error, {:http_error, status, message}} ->
             error_msg = "HTTP #{status}: #{message}"
@@ -501,6 +501,10 @@ defmodule CortexCore.Workers.Pool do
       {:ok, [{:stream_error, status, message} | _]} ->
         Logger.warning("Error HTTP detectado en stream: #{status} - #{message}")
         {:error, {:http_error, status, message}}
+
+      {:ok, [{:stream_done, _} | _]} ->
+        # Stream que solo emitió el done (respuesta vacía pero válida)
+        :ok
 
       {:ok, [first | _]} when is_binary(first) and byte_size(first) > 0 ->
         Logger.info("Stream válido detectado: #{byte_size(first)} bytes")
