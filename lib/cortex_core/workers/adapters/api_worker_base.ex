@@ -259,15 +259,15 @@ defmodule CortexCore.Workers.Adapters.APIWorkerBase do
 
       {^ref, {:error, {http_status, message}}} when is_integer(http_status) ->
         Logger.error("Stream terminado por HTTP #{http_status} en #{worker.name}: #{message}")
-        nil
+        {{:stream_error, http_status, message}, nil}
 
       {^ref, {:error, http_status}} when is_integer(http_status) ->
         Logger.error("Stream terminado por HTTP #{http_status} en #{worker.name}")
-        nil
+        {{:stream_error, http_status, "HTTP #{http_status} error"}, nil}
 
       {^ref, {:error, reason}} ->
         Logger.error("Stream error en #{worker.name}: #{inspect(reason)}")
-        nil
+        {{:stream_error, :connection_error, inspect(reason)}, nil}
 
       {^ref, {:chunk, chunk}} ->
         {chunk, state}

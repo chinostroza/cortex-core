@@ -378,10 +378,19 @@ defmodule CortexCore.Workers.Pool do
         case validate_stream(stream) do
           :ok ->
             Logger.info("Worker #{worker.name} respondió exitosamente")
-            {:ok, stream}
+            {:ok, Stream.filter(stream, &is_binary/1)}
+
+          {:error, {:http_error, status, message}} ->
+            error_msg = "HTTP #{status}: #{message}"
+
+            Logger.warning(
+              "Worker #{worker.name} falló con #{error_msg}, intentando con siguiente worker"
+            )
+
+            execute_with_failover(rest, messages, opts, [{worker.name, error_msg} | error_details])
 
           {:error, :empty_stream} ->
-            error_msg = "stream vacío (posible error HTTP no capturado)"
+            error_msg = "stream vacío (sin respuesta del provider)"
 
             Logger.warning(
               "Worker #{worker.name} devolvió #{error_msg}, intentando con siguiente worker"
@@ -488,6 +497,10 @@ defmodule CortexCore.Workers.Pool do
       {:ok, []} ->
         Logger.warning("Stream vacío detectado - posible error HTTP (403/503) no manejado")
         {:error, :empty_stream}
+
+      {:ok, [{:stream_error, status, message} | _]} ->
+        Logger.warning("Error HTTP detectado en stream: #{status} - #{message}")
+        {:error, {:http_error, status, message}}
 
       {:ok, [first | _]} when is_binary(first) and byte_size(first) > 0 ->
         Logger.info("Stream válido detectado: #{byte_size(first)} bytes")
