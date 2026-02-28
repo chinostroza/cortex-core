@@ -374,53 +374,16 @@ defmodule CortexCore.Workers.Pool do
 
     case worker.__struct__.stream_completion(worker, messages, opts) do
       {:ok, stream} ->
-        # Verificar que el stream no esté vacío
         case validate_stream(stream) do
           :ok ->
             Logger.info("Worker #{worker.name} respondió exitosamente")
             {:ok, Stream.filter(stream, fn e -> is_binary(e) or match?({:stream_done, _}, e) end)}
 
-          {:error, {:http_error, status, message}} ->
-            error_msg = "HTTP #{status}: #{message}"
+          error ->
+            error_msg = format_validation_error(error)
 
             Logger.warning(
-              "Worker #{worker.name} falló con #{error_msg}, intentando con siguiente worker"
-            )
-
-            execute_with_failover(rest, messages, opts, [{worker.name, error_msg} | error_details])
-
-          {:error, :empty_stream} ->
-            error_msg = "stream vacío (sin respuesta del provider)"
-
-            Logger.warning(
-              "Worker #{worker.name} devolvió #{error_msg}, intentando con siguiente worker"
-            )
-
-            execute_with_failover(rest, messages, opts, [{worker.name, error_msg} | error_details])
-
-          {:error, :validation_timeout} ->
-            error_msg = "timeout de validación (posible bloqueo por error HTTP)"
-
-            Logger.warning(
-              "Worker #{worker.name} tuvo #{error_msg}, intentando con siguiente worker"
-            )
-
-            execute_with_failover(rest, messages, opts, [{worker.name, error_msg} | error_details])
-
-          {:error, :invalid_format} ->
-            error_msg = "formato de respuesta inválido"
-
-            Logger.warning(
-              "Worker #{worker.name} devolvió #{error_msg}, intentando con siguiente worker"
-            )
-
-            execute_with_failover(rest, messages, opts, [{worker.name, error_msg} | error_details])
-
-          {:error, :validation_error} ->
-            error_msg = "error de validación interno"
-
-            Logger.warning(
-              "Worker #{worker.name} tuvo #{error_msg}, intentando con siguiente worker"
+              "Worker #{worker.name} falló: #{error_msg}, intentando con siguiente worker"
             )
 
             execute_with_failover(rest, messages, opts, [{worker.name, error_msg} | error_details])
@@ -432,6 +395,23 @@ defmodule CortexCore.Workers.Pool do
         execute_with_failover(rest, messages, opts, [{worker.name, error_msg} | error_details])
     end
   end
+
+  defp format_validation_error({:error, {:http_error, status, message}}),
+    do: "HTTP #{status}: #{message}"
+
+  defp format_validation_error({:error, :empty_stream}),
+    do: "stream vacío (sin respuesta del provider)"
+
+  defp format_validation_error({:error, :validation_timeout}),
+    do: "timeout de validación (posible bloqueo por error HTTP)"
+
+  defp format_validation_error({:error, :invalid_format}),
+    do: "formato de respuesta inválido"
+
+  defp format_validation_error({:error, :validation_error}),
+    do: "error de validación interno"
+
+  defp format_validation_error(_), do: "error desconocido de validación"
 
   defp format_error_reason({status, message}) when is_integer(status),
     do: "HTTP #{status}: #{message}"

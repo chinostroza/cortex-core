@@ -230,9 +230,6 @@ defmodule CortexCore.Workers.Adapters.APIWorkerBase do
 
       {:ok, final_acc} ->
         send(parent, {ref, {:done, final_acc.ratelimit}})
-
-      _ ->
-        send(parent, {ref, {:done, %{}}})
     end
   end
 

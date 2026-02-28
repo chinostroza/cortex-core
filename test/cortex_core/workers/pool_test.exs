@@ -81,7 +81,7 @@ defmodule CortexCore.Workers.PoolTest do
       # Test failover
       messages = [%{"role" => "user", "content" => "test"}]
       assert {:ok, stream} = Pool.stream_completion(pool, messages)
-      assert is_function(stream)
+      assert Enumerable.impl_for(stream) != nil
     end
 
     test "returns all workers failed when all workers fail", %{pool: pool, registry: registry} do

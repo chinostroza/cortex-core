@@ -95,7 +95,7 @@ defmodule CortexCore.Workers.Adapters.OpenAIWorkerTest do
       assert {:ok, stream} = OpenAIWorker.stream_completion(worker, messages, [])
 
       # Verify stream produces content
-      content = stream |> Enum.take(5) |> Enum.join("")
+      content = stream |> Stream.filter(&is_binary/1) |> Enum.take(5) |> Enum.join("")
       assert String.contains?(content, "Hello")
     end
 
@@ -118,7 +118,7 @@ defmodule CortexCore.Workers.Adapters.OpenAIWorkerTest do
       # Streaming APIs return {:ok, stream} even for errors
       assert {:ok, stream} = OpenAIWorker.stream_completion(worker, messages, [])
       # Errors are handled when consuming the stream
-      content = stream |> Enum.take(1) |> Enum.join("")
+      content = stream |> Stream.filter(&is_binary/1) |> Enum.take(1) |> Enum.join("")
       # No content for error responses
       assert content == ""
     end
@@ -142,7 +142,7 @@ defmodule CortexCore.Workers.Adapters.OpenAIWorkerTest do
       # Streaming APIs return {:ok, stream} even for rate limits
       assert {:ok, stream} = OpenAIWorker.stream_completion(worker, messages, [])
       # Rate limit errors are handled when consuming the stream
-      content = stream |> Enum.take(1) |> Enum.join("")
+      content = stream |> Stream.filter(&is_binary/1) |> Enum.take(1) |> Enum.join("")
       # No content for rate limit responses
       assert content == ""
     end
@@ -234,7 +234,7 @@ defmodule CortexCore.Workers.Adapters.OpenAIWorkerTest do
       end)
 
       {:ok, stream} = OpenAIWorker.stream_completion(worker, messages, [])
-      content = stream |> Enum.take(10) |> Enum.join("")
+      content = stream |> Stream.filter(&is_binary/1) |> Enum.take(10) |> Enum.join("")
 
       assert String.contains?(content, "Hello")
       assert String.contains?(content, "world")
@@ -264,7 +264,7 @@ defmodule CortexCore.Workers.Adapters.OpenAIWorkerTest do
       end)
 
       {:ok, stream} = OpenAIWorker.stream_completion(worker, messages, [])
-      content = stream |> Enum.take(5) |> Enum.join("")
+      content = stream |> Stream.filter(&is_binary/1) |> Enum.take(5) |> Enum.join("")
 
       assert String.contains?(content, "Hello")
     end
