@@ -129,6 +129,10 @@ defmodule CortexCore.ModelDiscovery do
 
   defp relevant_groq_model?(id) do
     relevant = ["llama", "mixtral", "gemma", "deepseek", "qwen"]
-    Enum.any?(relevant, &String.contains?(id, &1))
+    # Exclude moderation/guard models — not suitable for chat/ranking
+    exclude = ["guard", "prompt-guard", "whisper", "distil-whisper"]
+
+    Enum.any?(relevant, &String.contains?(id, &1)) and
+      not Enum.any?(exclude, &String.contains?(id, &1))
   end
 end
