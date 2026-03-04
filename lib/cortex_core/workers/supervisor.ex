@@ -161,25 +161,29 @@ defmodule CortexCore.Workers.Supervisor do
 
   @doc """
   Configura workers iniciales. Llamado de forma asíncrona por el Pool.
+
+  Accepts optional `model_resolver:` — a function `(worker_name :: String.t()) -> String.t() | nil`.
+  When provided, the resolved model overrides the environment-variable default.
   """
-  def configure_initial_workers(registry_name) do
-    configure_workers(registry_name)
+  def configure_initial_workers(registry_name, opts \\ []) do
+    model_resolver = Keyword.get(opts, :model_resolver)
+    configure_workers(registry_name, model_resolver)
   end
 
   # Private Functions
 
-  defp configure_workers(registry_name) do
+  defp configure_workers(registry_name, model_resolver) do
     # Configurar workers desde variables de entorno
     workers_to_register =
       []
       # LLM Workers
-      |> maybe_add_openai_worker()
-      |> maybe_add_anthropic_worker()
-      |> maybe_add_xai_worker()
-      |> maybe_add_groq_worker()
-      |> maybe_add_gemini_pro_25_worker()
-      |> maybe_add_gemini_worker()
-      |> maybe_add_cohere_worker()
+      |> maybe_add_openai_worker(model_resolver)
+      |> maybe_add_anthropic_worker(model_resolver)
+      |> maybe_add_xai_worker(model_resolver)
+      |> maybe_add_groq_worker(model_resolver)
+      |> maybe_add_gemini_pro_25_worker(model_resolver)
+      |> maybe_add_gemini_worker(model_resolver)
+      |> maybe_add_cohere_worker(model_resolver)
       |> maybe_add_ollama_worker()
       # Embeddings Workers
       |> maybe_add_openai_embeddings_worker()
@@ -231,13 +235,22 @@ defmodule CortexCore.Workers.Supervisor do
     end
   end
 
-  defp maybe_add_openai_worker(workers) do
+  defp resolve_model(model_resolver, worker_name, default) do
+    if is_function(model_resolver, 1) do
+      model_resolver.(worker_name) || default
+    else
+      default
+    end
+  end
+
+  defp maybe_add_openai_worker(workers, model_resolver) do
     openai_keys = get_env_list("OPENAI_API_KEYS")
 
     if Enum.empty?(openai_keys) do
       workers
     else
-      openai_model = System.get_env("OPENAI_MODEL", "gpt-5")
+      openai_model =
+        resolve_model(model_resolver, "openai-primary", System.get_env("OPENAI_MODEL", "gpt-5"))
 
       worker =
         OpenAIWorker.new(
@@ -251,13 +264,18 @@ defmodule CortexCore.Workers.Supervisor do
     end
   end
 
-  defp maybe_add_anthropic_worker(workers) do
+  defp maybe_add_anthropic_worker(workers, model_resolver) do
     anthropic_keys = get_env_list("ANTHROPIC_API_KEYS")
 
     if Enum.empty?(anthropic_keys) do
       workers
     else
-      anthropic_model = System.get_env("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+      anthropic_model =
+        resolve_model(
+          model_resolver,
+          "anthropic-primary",
+          System.get_env("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+        )
 
       worker =
         AnthropicWorker.new(
@@ -271,13 +289,18 @@ defmodule CortexCore.Workers.Supervisor do
     end
   end
 
-  defp maybe_add_xai_worker(workers) do
+  defp maybe_add_xai_worker(workers, model_resolver) do
     xai_keys = get_env_list("XAI_API_KEYS")
 
     if Enum.empty?(xai_keys) do
       workers
     else
-      xai_model = System.get_env("XAI_MODEL", "grok-code-fast-1")
+      xai_model =
+        resolve_model(
+          model_resolver,
+          "xai-primary",
+          System.get_env("XAI_MODEL", "grok-code-fast-1")
+        )
 
       worker =
         XAIWorker.new(
@@ -291,13 +314,18 @@ defmodule CortexCore.Workers.Supervisor do
     end
   end
 
-  defp maybe_add_gemini_pro_25_worker(workers) do
+  defp maybe_add_gemini_pro_25_worker(workers, model_resolver) do
     gemini_pro_25_keys = get_env_list("GEMINI_PRO_25_API_KEYS")
 
     if Enum.empty?(gemini_pro_25_keys) do
       workers
     else
-      gemini_pro_25_model = System.get_env("GEMINI_PRO_25_MODEL", "gemini-3-flash-preview")
+      gemini_pro_25_model =
+        resolve_model(
+          model_resolver,
+          "gemini-pro-25-primary",
+          System.get_env("GEMINI_PRO_25_MODEL", "gemini-3-flash-preview")
+        )
 
       worker =
         GeminiWorker.new(
@@ -311,13 +339,19 @@ defmodule CortexCore.Workers.Supervisor do
     end
   end
 
-  defp maybe_add_groq_worker(workers) do
+  defp maybe_add_groq_worker(workers, model_resolver) do
     groq_keys = get_env_list("GROQ_API_KEYS")
 
     if Enum.empty?(groq_keys) do
       workers
     else
-      groq_model = System.get_env("GROQ_MODEL", "llama-3.1-8b-instant")
+      groq_model =
+        resolve_model(
+          model_resolver,
+          "groq-primary",
+          System.get_env("GROQ_MODEL", "llama-3.1-8b-instant")
+        )
+
       Logger.info("Configurando Groq worker con modelo: #{groq_model}")
 
       worker =
@@ -332,13 +366,18 @@ defmodule CortexCore.Workers.Supervisor do
     end
   end
 
-  defp maybe_add_gemini_worker(workers) do
+  defp maybe_add_gemini_worker(workers, model_resolver) do
     gemini_keys = get_env_list("GEMINI_API_KEYS")
 
     if Enum.empty?(gemini_keys) do
       workers
     else
-      gemini_model = System.get_env("GEMINI_MODEL", "gemini-3-flash-preview")
+      gemini_model =
+        resolve_model(
+          model_resolver,
+          "gemini-primary",
+          System.get_env("GEMINI_MODEL", "gemini-3-flash-preview")
+        )
 
       worker =
         GeminiWorker.new(
@@ -352,13 +391,18 @@ defmodule CortexCore.Workers.Supervisor do
     end
   end
 
-  defp maybe_add_cohere_worker(workers) do
+  defp maybe_add_cohere_worker(workers, model_resolver) do
     cohere_keys = get_env_list("COHERE_API_KEYS")
 
     if Enum.empty?(cohere_keys) do
       workers
     else
-      cohere_model = System.get_env("COHERE_MODEL", "command-light")
+      cohere_model =
+        resolve_model(
+          model_resolver,
+          "cohere-primary",
+          System.get_env("COHERE_MODEL", "command-light")
+        )
 
       worker =
         CohereWorker.new(

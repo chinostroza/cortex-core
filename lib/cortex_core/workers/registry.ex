@@ -59,6 +59,15 @@ defmodule CortexCore.Workers.Registry do
     GenServer.call(registry, :count)
   end
 
+  @doc """
+  Actualiza el campo `default_model` de un worker registrado en runtime.
+
+  Returns `:ok` or `{:error, :not_found}`.
+  """
+  def update_worker(registry \\ __MODULE__, name, updates) do
+    GenServer.call(registry, {:update_worker, name, updates})
+  end
+
   # Server Callbacks
 
   @impl true
@@ -115,5 +124,18 @@ defmodule CortexCore.Workers.Registry do
   def handle_call(:count, _from, state) do
     count = map_size(state.workers)
     {:reply, count, state}
+  end
+
+  @impl true
+  def handle_call({:update_worker, name, updates}, _from, state) do
+    case Map.get(state.workers, name) do
+      nil ->
+        {:reply, {:error, :not_found}, state}
+
+      worker ->
+        updated_worker = struct(worker, updates)
+        new_workers = Map.put(state.workers, name, updated_worker)
+        {:reply, :ok, %{state | workers: new_workers}}
+    end
   end
 end
