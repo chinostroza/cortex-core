@@ -66,6 +66,7 @@ defmodule CortexCore.ModelDiscovery do
           |> Enum.map(&Map.get(&1, "id", ""))
           |> Enum.filter(&relevant_groq_model?/1)
           |> Enum.reject(&(&1 == ""))
+          |> sort_groq_models()
 
         {:ok, models}
 
@@ -123,16 +124,51 @@ defmodule CortexCore.ModelDiscovery do
   defp strip_model_prefix(name), do: name
 
   defp skip_gemini_model?(name) do
-    skip_patterns = ["tts", "image", "robotics", "embedding", "nano-banana", "aqa", "vision"]
-    Enum.any?(skip_patterns, &String.contains?(name, &1))
+    # Non-chat models
+    skip = [
+      "tts",
+      "image",
+      "robotics",
+      "embedding",
+      "nano-banana",
+      "aqa",
+      "vision",
+      # Specialized / not general chat
+      "computer-use",
+      "deep-research",
+      "customtools"
+    ]
+
+    Enum.any?(skip, &String.contains?(name, &1))
   end
+
+  # Preferred Groq models for chat, in priority order
+  @groq_preferred_order [
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+    "qwen/qwen3-32b",
+    "meta-llama/llama-4-scout",
+    "meta-llama/llama-4-maverick",
+    "mixtral",
+    "gemma"
+  ]
 
   defp relevant_groq_model?(id) do
     relevant = ["llama", "mixtral", "gemma", "deepseek", "qwen"]
-    # Exclude moderation/guard models — not suitable for chat/ranking
+    # Exclude moderation/guard models — not suitable for chat
     exclude = ["guard", "prompt-guard", "whisper", "distil-whisper"]
 
     Enum.any?(relevant, &String.contains?(id, &1)) and
       not Enum.any?(exclude, &String.contains?(id, &1))
+  end
+
+  @doc false
+  def sort_groq_models(models) do
+    Enum.sort_by(models, fn id ->
+      idx =
+        Enum.find_index(@groq_preferred_order, &String.contains?(id, &1))
+
+      idx || length(@groq_preferred_order)
+    end)
   end
 end
