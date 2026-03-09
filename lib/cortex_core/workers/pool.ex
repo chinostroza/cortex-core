@@ -151,6 +151,13 @@ defmodule CortexCore.Workers.Pool do
   end
 
   @impl true
+  def handle_cast({:mark_degraded, worker_name, status}, state) do
+    new_health = Map.put(state.health_status, worker_name, status)
+    Logger.warning("Worker #{worker_name} marcado como #{status} por fallo en request")
+    {:noreply, %{state | health_status: new_health}}
+  end
+
+  @impl true
   def handle_info(:configure_initial_workers, state) do
     # Configurar workers de forma asíncrona
     Task.start(fn ->
@@ -377,7 +384,24 @@ defmodule CortexCore.Workers.Pool do
         case validate_stream(stream) do
           :ok ->
             Logger.info("Worker #{worker.name} respondió exitosamente")
-            {:ok, Stream.filter(stream, fn e -> is_binary(e) or match?({:stream_done, _}, e) end)}
+            model = opts[:model] || worker.default_model || Map.get(worker, :model)
+            failed = Enum.map(error_details, fn {name, _} -> name end)
+
+            stream_meta = %{
+              "model" => to_string(model || ""),
+              "worker" => worker.name,
+              "failover" => failed
+            }
+
+            tagged =
+              stream
+              |> Stream.filter(fn e -> is_binary(e) or match?({:stream_done, _}, e) end)
+              |> Stream.map(fn
+                {:stream_done, info} -> {:stream_done, Map.merge(info || %{}, stream_meta)}
+                e -> e
+              end)
+
+            {:ok, tagged}
 
           error ->
             error_msg = format_validation_error(error)
@@ -386,14 +410,29 @@ defmodule CortexCore.Workers.Pool do
               "Worker #{worker.name} falló: #{error_msg}, intentando con siguiente worker"
             )
 
+            mark_worker_degraded(worker.name, error)
+
             execute_with_failover(rest, messages, opts, [{worker.name, error_msg} | error_details])
         end
 
       {:error, reason} ->
         error_msg = format_error_reason(reason)
         Logger.warning("Worker #{worker.name} falló: #{error_msg}")
+        mark_worker_degraded(worker.name, reason)
         execute_with_failover(rest, messages, opts, [{worker.name, error_msg} | error_details])
     end
+  end
+
+  defp mark_worker_degraded(worker_name, reason) do
+    status =
+      case reason do
+        {:error, {:http_error, 429, _}} -> :rate_limited
+        {:http_error, 429, _} -> :rate_limited
+        429 -> :rate_limited
+        _ -> :unavailable
+      end
+
+    GenServer.cast(__MODULE__, {:mark_degraded, worker_name, status})
   end
 
   defp format_validation_error({:error, {:http_error, status, message}}),
@@ -472,8 +511,8 @@ defmodule CortexCore.Workers.Pool do
         |> Enum.to_list()
       end)
 
-    # 10 segundos timeout para modelos experimentales
-    case Task.yield(task, 10_000) do
+    # 5 segundos timeout — reduce max failover time con múltiples workers
+    case Task.yield(task, 5_000) do
       {:ok, []} ->
         Logger.warning("Stream vacío detectado - posible error HTTP (403/503) no manejado")
         {:error, :empty_stream}

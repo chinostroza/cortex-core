@@ -9,13 +9,14 @@ defmodule CortexCore.ModelDiscovery do
   require Logger
 
   # Curated model lists for providers without discovery endpoints
-  @anthropic_models [
-    "claude-sonnet-4-20250514",
-    "claude-3-5-haiku-20241022",
-    "claude-3-opus-20240229"
-  ]
   @cohere_models ["command-r-plus", "command-r", "command-light"]
   @xai_models ["grok-code-fast-1", "grok-3-mini-beta", "grok-beta"]
+
+  # Fallback for Anthropic if the API call fails
+  @anthropic_fallback_models [
+    "claude-sonnet-4-20250514",
+    "claude-haiku-4-5-20251001"
+  ]
 
   @doc """
   Discover available models for a given worker.
@@ -104,7 +105,45 @@ defmodule CortexCore.ModelDiscovery do
     end
   end
 
-  def list_models(:anthropic, _api_key), do: {:ok, @anthropic_models}
+  def list_models(:anthropic, api_key) do
+    url = "https://api.anthropic.com/v1/models"
+
+    case Req.get(url,
+           headers: [
+             {"x-api-key", api_key},
+             {"anthropic-version", "2023-06-01"}
+           ],
+           receive_timeout: 10_000,
+           retry: false
+         ) do
+      {:ok, %{status: 200, body: body}} ->
+        models =
+          body
+          |> Map.get("data", [])
+          |> Enum.map(&Map.get(&1, "id", ""))
+          |> Enum.filter(&relevant_anthropic_model?/1)
+          |> Enum.reject(&(&1 == ""))
+
+        if models == [] do
+          Logger.warning("ModelDiscovery: Anthropic returned 0 relevant models, using fallback")
+          {:ok, @anthropic_fallback_models}
+        else
+          {:ok, models}
+        end
+
+      {:ok, %{status: status}} ->
+        Logger.warning("ModelDiscovery: Anthropic API returned #{status}, using fallback")
+        {:ok, @anthropic_fallback_models}
+
+      {:error, reason} ->
+        Logger.warning(
+          "ModelDiscovery: Anthropic discovery failed #{inspect(reason)}, using fallback"
+        )
+
+        {:ok, @anthropic_fallback_models}
+    end
+  end
+
   def list_models(:cohere, _api_key), do: {:ok, @cohere_models}
   def list_models(:xai, _api_key), do: {:ok, @xai_models}
 
@@ -160,6 +199,11 @@ defmodule CortexCore.ModelDiscovery do
 
     Enum.any?(relevant, &String.contains?(id, &1)) and
       not Enum.any?(exclude, &String.contains?(id, &1))
+  end
+
+  defp relevant_anthropic_model?(id) do
+    relevant = ["claude-sonnet", "claude-haiku", "claude-opus"]
+    Enum.any?(relevant, &String.contains?(id, &1))
   end
 
   @doc false

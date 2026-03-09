@@ -305,7 +305,9 @@ defmodule CortexCore.Workers.Adapters.AnthropicWorkerTest do
       end)
 
       {:ok, stream} = AnthropicWorker.stream_completion(worker, messages, [])
-      content_pieces = stream |> Stream.filter(&is_binary/1) |> Enum.take(10) |> Enum.reject(&(&1 == ""))
+
+      content_pieces =
+        stream |> Stream.filter(&is_binary/1) |> Enum.take(10) |> Enum.reject(&(&1 == ""))
 
       # Should only contain actual content, not control events
       assert content_pieces == ["Content"]
