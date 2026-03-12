@@ -22,6 +22,7 @@ defmodule CortexCore.Workers.Pool do
     :registry,
     :strategy,
     :health_status,
+    :capabilities,
     :check_interval,
     :round_robin_index
   ]
@@ -73,6 +74,32 @@ defmodule CortexCore.Workers.Pool do
     GenServer.cast(pool, :check_health)
   end
 
+  @doc """
+  Stores capability declarations for a worker.
+  Capabilities: :chat, :tools, :long_context, :vision, :fast, :reasoning, :search, etc.
+  """
+  def set_capabilities(pool \\ __MODULE__, worker_name, caps) when is_list(caps) do
+    GenServer.call(pool, {:set_capabilities, worker_name, caps})
+  end
+
+  @doc """
+  Returns the declared capabilities for a worker (defaults to [:chat]).
+  """
+  def get_capabilities(pool \\ __MODULE__, worker_name) do
+    GenServer.call(pool, {:get_capabilities, worker_name})
+  end
+
+  @doc """
+  Calls an LLM worker with tool definitions, routing by :tools capability.
+
+  When `provider` is not specified, auto-routes to any available worker that
+  declares the :tools capability. With `provider`, validates capability first.
+  """
+  def call_with_tools(pool \\ __MODULE__, messages, tools, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 30_000)
+    GenServer.call(pool, {:call_with_tools, messages, tools, opts}, timeout)
+  end
+
   # Server Callbacks
 
   @impl true
@@ -85,6 +112,7 @@ defmodule CortexCore.Workers.Pool do
       registry: registry,
       strategy: strategy,
       health_status: %{},
+      capabilities: %{},
       check_interval: check_interval,
       round_robin_index: 0
     }
@@ -145,6 +173,23 @@ defmodule CortexCore.Workers.Pool do
   end
 
   @impl true
+  def handle_call({:set_capabilities, worker_name, caps}, _from, state) do
+    new_caps = Map.put(state.capabilities, worker_name, caps)
+    {:reply, :ok, %{state | capabilities: new_caps}}
+  end
+
+  @impl true
+  def handle_call({:get_capabilities, worker_name}, _from, state) do
+    {:reply, Map.get(state.capabilities, worker_name, [:chat]), state}
+  end
+
+  @impl true
+  def handle_call({:call_with_tools, messages, tools, opts}, _from, state) do
+    result = execute_tools_routing(state, messages, tools, opts)
+    {:reply, result, state}
+  end
+
+  @impl true
   def handle_cast(:check_health, state) do
     new_health_status = perform_health_checks(state)
     {:noreply, %{state | health_status: new_health_status}}
@@ -192,6 +237,54 @@ defmodule CortexCore.Workers.Pool do
   end
 
   # Private Functions
+
+  defp execute_tools_routing(state, messages, tools, opts) do
+    case Keyword.get(opts, :provider) do
+      nil ->
+        available = get_available_workers(state, :llm)
+
+        capable =
+          Enum.filter(available, fn w ->
+            :tools in Map.get(state.capabilities, w.name, [:chat])
+          end)
+
+        if Enum.empty?(capable) do
+          {:error, :no_workers_available}
+        else
+          execute_tools_with_failover(capable, messages, tools, opts)
+        end
+
+      provider_name ->
+        worker_caps = Map.get(state.capabilities, provider_name, [:chat])
+
+        if :tools in worker_caps do
+          case Registry.get(state.registry, provider_name) do
+            {:ok, worker} -> worker.__struct__.call_with_tools(worker, messages, tools, opts)
+            {:error, :not_found} -> {:error, {:provider_not_found, provider_name}}
+          end
+        else
+          {:error, {:worker_lacks_capability, provider_name, :tools}}
+        end
+    end
+  end
+
+  defp execute_tools_with_failover([], _messages, _tools, _opts) do
+    {:error, :no_workers_available}
+  end
+
+  defp execute_tools_with_failover([worker | rest], messages, tools, opts) do
+    case worker.__struct__.call_with_tools(worker, messages, tools, opts) do
+      {:ok, tool_calls} ->
+        {:ok, tool_calls}
+
+      {:error, reason} ->
+        Logger.warning(
+          "Worker #{worker.name} failed tools call: #{inspect(reason)}, trying next..."
+        )
+
+        execute_tools_with_failover(rest, messages, tools, opts)
+    end
+  end
 
   defp select_and_execute_service(state, service_type, params, opts) do
     case Keyword.get(opts, :provider) do
@@ -384,7 +477,7 @@ defmodule CortexCore.Workers.Pool do
         case validate_stream(stream) do
           :ok ->
             Logger.info("Worker #{worker.name} respondió exitosamente")
-            model = opts[:model] || worker.default_model || Map.get(worker, :model)
+            model = opts[:model] || Map.get(worker, :default_model) || Map.get(worker, :model)
             failed = Enum.map(error_details, fn {name, _} -> name end)
 
             stream_meta = %{

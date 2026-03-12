@@ -58,14 +58,21 @@ defmodule CortexCore.DispatcherTest do
   end
 
   describe "dispatch_tools/3" do
-    test "returns error when no provider specified" do
-      assert {:error, :no_provider_specified} = Dispatcher.dispatch_tools([], [], [])
+    test "returns error when no workers have tools capability" do
+      with_mock Pool,
+        call_with_tools: fn _pool, _messages, _tools, _opts -> {:error, :no_workers_available} end do
+        assert {:error, :no_workers_available} = Dispatcher.dispatch_tools([], [], [])
+      end
     end
 
-    test "returns error when provider not found" do
-      with_mock Registry, get: fn _registry, _name -> {:error, :not_found} end do
+    test "returns error when provider lacks tools capability" do
+      with_mock Pool,
+        call_with_tools: fn _pool, _messages, _tools, opts ->
+          name = Keyword.get(opts, :provider)
+          {:error, {:worker_lacks_capability, name, :tools}}
+        end do
         result = Dispatcher.dispatch_tools([], [], provider: "missing-worker")
-        assert {:error, {:provider_not_found, "missing-worker"}} = result
+        assert {:error, {:worker_lacks_capability, "missing-worker", :tools}} = result
       end
     end
   end

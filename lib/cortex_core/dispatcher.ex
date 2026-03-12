@@ -10,7 +10,7 @@ defmodule CortexCore.Dispatcher do
 
   require Logger
 
-  alias CortexCore.Workers.{Pool, Registry}
+  alias CortexCore.Workers.Pool
 
   @doc """
   Despacha una operación genérica a un worker del tipo especificado.
@@ -93,35 +93,25 @@ defmodule CortexCore.Dispatcher do
   end
 
   @doc """
-  Despacha una llamada con tool use / function calling a un provider específico.
+  Despacha una llamada con tool use / function calling.
 
-  Requiere que el provider sea especificado explícitamente via opts[:provider].
-  No usa auto-selección ya que el tool use requiere providers con soporte explícito.
+  Si `provider` está en opts, valida que ese worker tenga capacidad :tools antes de
+  rutear. Si no hay provider, auto-selecciona entre workers con capacidad :tools
+  (con failover).
 
   ## Args
     - messages: Lista de mensajes en formato OpenAI
     - tools: Lista de herramientas en formato OpenAI function calling
-    - opts: Opciones - :provider (requerido), :model, :tool_choice
+    - opts: Opciones - :provider (opcional), :model, :tool_choice
 
   ## Returns
     - `{:ok, tool_calls}` lista de %{name: name, arguments: args}
-    - `{:error, :no_provider_specified}` si no se especificó provider
+    - `{:error, :no_workers_available}` si no hay workers capaces de tool use
+    - `{:error, {:worker_lacks_capability, name, :tools}}` si el provider no soporta tools
     - `{:error, {:provider_not_found, name}}` si el provider no existe
   """
   def dispatch_tools(messages, tools, opts \\ []) do
-    case Keyword.get(opts, :provider) do
-      nil ->
-        {:error, :no_provider_specified}
-
-      name ->
-        case Registry.get(Registry, name) do
-          {:ok, worker} ->
-            worker.__struct__.call_with_tools(worker, messages, tools, opts)
-
-          {:error, :not_found} ->
-            {:error, {:provider_not_found, name}}
-        end
-    end
+    Pool.call_with_tools(Pool, messages, tools, opts)
   end
 
   @doc """

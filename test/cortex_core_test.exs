@@ -55,7 +55,7 @@ defmodule CortexCoreTest do
       end)
     end
 
-    test "call_with_tools/3 returns error when no provider specified" do
+    test "call_with_tools/3 returns error when no workers with tools capability" do
       with_mocked_dependencies(fn ->
         result =
           CortexCore.call_with_tools(
@@ -63,7 +63,8 @@ defmodule CortexCoreTest do
             [%{"function" => %{"name" => "test"}}]
           )
 
-        assert {:error, :no_provider_specified} = result
+        # No provider means auto-routing; no workers have :tools capability in test pool
+        assert {:error, :no_workers_available} = result
       end)
     end
 

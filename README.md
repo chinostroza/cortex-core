@@ -26,7 +26,7 @@ Add `cortex_core` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:cortex_core, "~> 1.0.0"}
+    {:cortex_core, "~> 1.1.0"}
   ]
 end
 ```

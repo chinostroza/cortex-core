@@ -76,7 +76,23 @@ defmodule CortexCore.TestHelpers do
            {:ok, %{"results" => []}}
          end,
          check_health: fn _pool -> :ok end,
-         check_health: fn -> :ok end
+         check_health: fn -> :ok end,
+         call_with_tools: fn _pool, _messages, _tools, opts ->
+           case Keyword.get(opts, :provider) do
+             nil -> {:error, :no_workers_available}
+             name -> {:error, {:worker_lacks_capability, name, :tools}}
+           end
+         end,
+         call_with_tools: fn _messages, _tools, opts ->
+           case Keyword.get(opts, :provider) do
+             nil -> {:error, :no_workers_available}
+             name -> {:error, {:worker_lacks_capability, name, :tools}}
+           end
+         end,
+         get_capabilities: fn _pool, _worker_name -> [:chat] end,
+         get_capabilities: fn _worker_name -> [:chat] end,
+         set_capabilities: fn _pool, _worker_name, _caps -> :ok end,
+         set_capabilities: fn _worker_name, _caps -> :ok end
        ]},
       # Also mock the Supervisor to avoid async worker configuration
       {CortexCore.Workers.Supervisor, [:passthrough],
